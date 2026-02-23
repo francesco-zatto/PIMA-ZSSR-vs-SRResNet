@@ -4,7 +4,7 @@ from torch.utils.data import Dataset
 from abc import ABC, abstractmethod
 from PIL import Image
 
-class AbstractSRDataLoader(Dataset, ABC):
+class AbstractSRDataset(Dataset, ABC):
     """
     Abstract base class for Super-Resolution Datasets.
     It defines the interface for both supervised and self-supervised datasets.
