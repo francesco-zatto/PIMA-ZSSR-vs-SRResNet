@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 from torch.utils.data import Dataset
+from torchvision.transforms import ToTensor
 from abc import ABC, abstractmethod
 from PIL import Image
 
@@ -12,6 +13,7 @@ class AbstractSRDataset(Dataset, ABC):
     def __init__(self, scale_factor: int):
         super().__init__()
         self.scale_factor = scale_factor
+        self.to_tensor = ToTensor()
 
     @abstractmethod
     def __len__(self) -> int:        
@@ -37,4 +39,4 @@ class AbstractSRDataset(Dataset, ABC):
         """
         Converts a PIL Image to a PyTorch tensor and normalizes it to [0, 1].
         """
-        return torch.from_numpy(np.array(img)).float() / 255.0
+        return self.to_tensor(img)

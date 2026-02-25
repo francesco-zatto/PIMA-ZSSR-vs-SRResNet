@@ -1,7 +1,10 @@
 import torch
 import numpy as np
-import torchvision.transforms.functional as transforms
+import random
+import torchvision.transforms as transforms
+import torchvision.transforms.functional as transformsF
 from data.abstract_sr_dataset import AbstractSRDataset
+from data.utils import augment
 
 class ZSSRDataset(AbstractSRDataset):
     """
@@ -15,36 +18,36 @@ class ZSSRDataset(AbstractSRDataset):
         self.image = self.to_tensor(self.load_image(image_path))
         self.num_patches = num_patches
         self.crop_size = crop_size
-        self.h, self.w = self.image.shape[1], self.image.shape[2]
+        self.random_cropper = transforms.RandomCrop(crop_size)
+        _, self.h, self.w = self.image.shape
         self.current_scale_factor = scale_factor
 
         self.hr_scales = np.linspace(1.0, 0.5, num_hr_scale_factors)
         self.pool_fathers: dict[float, torch.Tensor] = {}
         self._create_inital_pool()
+        self.sampling_probs = self._compute_sampling_probs()
 
     def _create_inital_pool(self):
         """Creates the initial pool of augmented HR images based on the input image and specified scales."""
         for scale in self.hr_scales:
             new_h, new_w = int(self.h * scale), int(self.w * scale)
-            resized_image = transforms.resize(self.image, (new_h, new_w))
+            resized_image = transformsF.resize(self.image, (new_h, new_w))
             self._add_to_pool(resized_image)
     
     def _add_to_pool(self, hr_image: torch.Tensor):
         """Adds a new HR image to the pool of augmented images."""
-        augmented_images = self._augment(hr_image)
+        augmented_images = augment(hr_image)
         ratio = self._compute_ratio(hr_image.shape[1:], (self.h, self.w))
         self.pool_fathers.setdefault(ratio, []).extend(augmented_images)
-
-    def _augment(self, img: torch.Tensor) -> list[torch.Tensor]:
-        """Applies rotations and horizontal flips to the input image to create 8 augmented versions."""
-        rotations = [0, 90, 180, 270]
-        ks = [angle // 90 for angle in rotations]
-        augmented_images = []
-        for k in ks:
-            rotated_img = torch.rot90(img, k)
-            hflip_img = transforms.hflip(rotated_img)
-            augmented_images.extend([rotated_img, hflip_img])
-        return augmented_images
+        self.sampling_probs = self._compute_sampling_probs()
+    
+    def _compute_sampling_probs(self) -> dict[float, float]:
+        """
+        Compute sampling probabilities for the ratio, proportional to the ratio itself.
+        """
+        ratios = np.array(list(self.pool_fathers.keys()))
+        probs = ratios / np.sum(ratios)
+        return dict(zip(ratios, probs))
 
     def __len__(self) -> int:
         return self.num_patches
@@ -54,7 +57,6 @@ class ZSSRDataset(AbstractSRDataset):
         Updates the current scale factor for generating LR-HR pairs."""
         self.current_scale_factor = scale_factor
 
-    # TODO maybe change the way ratio is computed
     def _compute_ratio(self, new_shape: tuple[int, int], I_shape: tuple[int, int]) -> float:
         new_h, new_w = new_shape
         I_h, I_w = I_shape
@@ -64,12 +66,21 @@ class ZSSRDataset(AbstractSRDataset):
         """
         Adds new HR image to the pool of augmented images for training.
         """
-        self._add_to_pool(new_hr_image)    
+        self._add_to_pool(new_hr_image) 
 
-    def set_scale_factor(self, scale_factor: float):
-        self.current_scale_factor = scale_factor
+    def _crop(self, hr_image: torch.Tensor) -> torch.Tensor:
+        """Crops a random patch from the HR image."""
+        _, h, w = hr_image.shape
+        if h < self.crop_size or w < self.crop_size:
+            return hr_image
+        return self.random_cropper(hr_image)
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
-        hr_image = self.extract(self.augmented_images)
+        extracted_ratio = np.random.choice(list(self.pool_fathers.keys()), p=list(self.sampling_probs.values()))
+        hr_images = self.pool_fathers[extracted_ratio]
+        hr_image = random.choice(hr_images)
+        hr_crop = self._crop(hr_image)
+        lr_size = (int(hr_crop.shape[1] / self.current_scale_factor), int(hr_crop.shape[2] / self.current_scale_factor))
+        lr_crop = transformsF.resize(hr_crop, lr_size, interpolation=transforms.InterpolationMode.BICUBIC)
+        return lr_crop, hr_crop
 
-        return None, None
