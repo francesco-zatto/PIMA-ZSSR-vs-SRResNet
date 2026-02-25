@@ -27,7 +27,7 @@ class AbstractSRDataset(Dataset, ABC):
         """
         pass
 
-    def load_image(self, path: str) -> torch.Tensor:
+    def load_image(self, path: str) -> Image:
         """
         Common utility method to load an image as RGB
         """

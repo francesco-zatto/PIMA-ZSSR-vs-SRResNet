@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import torchvision.transforms.functional as transforms
-from data.AbstractSRDataset import AbstractSRDataset
+from data.abstract_sr_dataset import AbstractSRDataset
 
 class ZSSRDataset(AbstractSRDataset):
     """
@@ -12,23 +12,22 @@ class ZSSRDataset(AbstractSRDataset):
                  num_hr_scale_factors: int = 6, crop_size: int = 128):
         super().__init__(scale_factor)
         self.image_path = image_path
-        self.image = self.load_image(image_path)
+        self.image = self.to_tensor(self.load_image(image_path))
         self.num_patches = num_patches
         self.crop_size = crop_size
         self.h, self.w = self.image.shape[1], self.image.shape[2]
         self.current_scale_factor = scale_factor
 
         self.hr_scales = np.linspace(1.0, 0.5, num_hr_scale_factors)
-        self.pool_fathers = self._create_inital_pool()
+        self.pool_fathers: dict[float, torch.Tensor] = {}
+        self._create_inital_pool()
 
-    def _create_inital_pool(self) -> dict[float, torch.Tensor]:
+    def _create_inital_pool(self):
         """Creates the initial pool of augmented HR images based on the input image and specified scales."""
-        pool = {}
         for scale in self.hr_scales:
             new_h, new_w = int(self.h * scale), int(self.w * scale)
             resized_image = transforms.resize(self.image, (new_h, new_w))
             self._add_to_pool(resized_image)
-        return pool
     
     def _add_to_pool(self, hr_image: torch.Tensor):
         """Adds a new HR image to the pool of augmented images."""
