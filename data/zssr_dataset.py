@@ -66,6 +66,8 @@ class ZSSRDataset(AbstractSRDataset):
         """
         Adds new HR image to the pool of augmented images for training.
         """
+        if len(new_hr_image.shape) > 3:
+            new_hr_image = new_hr_image.squeeze(0)
         self._add_to_pool(new_hr_image) 
 
     def _crop(self, hr_image: torch.Tensor) -> torch.Tensor:
