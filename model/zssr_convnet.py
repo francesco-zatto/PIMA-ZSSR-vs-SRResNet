@@ -23,6 +23,9 @@ class ZSSRConvNet(nn.Module):
         for _ in range(num_blocks - 1):
             layers.append(ConvReLUBlock(num_channels, num_channels))
         layers.append(nn.Conv2d(num_channels, 3, kernel_size=3, padding=1))
+        layers.append(nn.Sequential(
+            nn.Tanh(), nn.Conv2d(3, 3, kernel_size=3, padding=1), nn.Sigmoid()
+        ))
         self.network = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
