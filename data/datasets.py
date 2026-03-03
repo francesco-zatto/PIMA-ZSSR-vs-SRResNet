@@ -5,7 +5,7 @@ from abc import ABC
 
 class AbstractSRDataset(Dataset, ABC):
     """
-    Generic SISR Dataset that delegates all logic to a SRPreprocessingStrategy.
+    Generic SISR Dataset that delegate preprocessing operations to a SRPreprocessingStrategy.
     """
     def __init__(self, root_dir: str, scale_factor: float, strategy: SRPreprocessingStrategy, ext: str):
         self.scale_factor = scale_factor

@@ -28,5 +28,6 @@ class ZSSRConvNet(nn.Module):
         ))
         self.network = nn.Sequential(*layers)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, out_size: torch.Size) -> torch.Tensor:
+        x = nn.functional.interpolate(x, out_size, mode="bicubic")
         return self.network(x) + x
