@@ -43,16 +43,17 @@ class ZSSRPreprocessing(SRPreprocessingStrategy):
         self.crop_size = crop_size
         self.pool_fathers: dict[float, list[torch.Tensor]] = {}
         self.sampling_probs: dict[float, float] = {}
+        self.base_img = None
 
     def prepare(self, root_dir: str, ext: str):
         image_path = glob.glob(os.path.join(root_dir, ext))[0]
-        base_img = self._load_image(image_path)
-        _, h, w = base_img.shape
+        self.base_img = self._load_image(image_path)
+        _, h, w = self.base_img.shape
         
         hr_scales = np.linspace(1.0, 0.5, self.num_hr_scales)
         for s in hr_scales:
             new_h, new_w = int(h * s), int(w * s)
-            resized = transformsF.resize(base_img, (new_h, new_w), 
+            resized = transformsF.resize(self.base_img, (new_h, new_w), 
                                          interpolation=transforms.InterpolationMode.BICUBIC)
             self._add_to_pool(resized, (h, w))
 
