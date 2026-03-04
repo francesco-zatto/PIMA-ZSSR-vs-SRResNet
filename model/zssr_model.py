@@ -10,8 +10,14 @@ class ConvReLUBlock(torch.nn.Module):
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
         self.relu = nn.ReLU(inplace=True)
 
+        self._init_weights()
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.relu(self.conv(x))
+
+    def _init_weights(self) -> None:
+        nn.init.kaiming_normal_(self.conv.weight, mode='fan_out', nonlinearity='relu')
+        nn.init.zeros_(self.conv.bias)
 
 class ZSSRConvNet(nn.Module):
     """
@@ -23,9 +29,14 @@ class ZSSRConvNet(nn.Module):
         for _ in range(num_blocks - 1):
             layers.append(ConvReLUBlock(num_channels, num_channels))
         layers.append(nn.Conv2d(num_channels, 3, kernel_size=3, padding=1))
+
+        last_conv = nn.Conv2d(3, 3, kernel_size=3, padding=1)
+        nn.init.zeros_(last_conv.weight)
+        nn.init.zeros_(last_conv.bias)
         layers.append(nn.Sequential(
-            nn.Tanh(), nn.Conv2d(3, 3, kernel_size=3, padding=1), nn.Sigmoid()
+            nn.Tanh(), last_conv, nn.Sigmoid()
         ))
+        
         self.network = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor, out_size: torch.Size) -> torch.Tensor:

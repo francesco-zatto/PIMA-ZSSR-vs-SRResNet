@@ -29,6 +29,13 @@ class SRPreprocessingStrategy(ABC):
         """Returns the virtual length of the dataset."""
         pass
 
+    @abstractmethod
+    def update(self, new_hrs: list[torch.Tensor]) -> None:
+        """
+        Updates the dataset by adding the list of new HRs images.
+        """
+        pass
+
 class ResNetPreprocessing(SRPreprocessingStrategy):
     # TODO
     pass
@@ -48,17 +55,19 @@ class ZSSRPreprocessing(SRPreprocessingStrategy):
     def prepare(self, root_dir: str, ext: str):
         image_path = glob.glob(os.path.join(root_dir, ext))[0]
         self.base_img = self._load_image(image_path)
-        _, h, w = self.base_img.shape
-        
-        hr_scales = np.linspace(1.0, 0.5, self.num_hr_scales)
-        for s in hr_scales:
-            new_h, new_w = int(h * s), int(w * s)
-            resized = transformsF.resize(self.base_img, (new_h, new_w), 
-                                         interpolation=transforms.InterpolationMode.BICUBIC)
-            self._add_to_pool(resized, (h, w))
+        self._add_downsampled_versions(self.base_img)
 
     def _load_image(self, image_path: str) -> torch.Tensor:
         return transformsF.to_tensor(Image.open(image_path).convert('RGB'))
+
+    def _add_downsampled_versions(self, img: torch.Tensor):
+        hr_scales = np.linspace(1.0, 0.5, self.num_hr_scales)
+        _, h, w = img.shape
+        for s in hr_scales:
+            new_h, new_w = int(h * s), int(w * s)
+            resized = transformsF.resize(img, (new_h, new_w), 
+                                         interpolation=transforms.InterpolationMode.BICUBIC)
+            self._add_to_pool(resized, (h, w))
 
     def _add_to_pool(self, hr_image: torch.Tensor, original_dims: tuple[int, int]):
         augmented_images = augment(hr_image)
@@ -91,3 +100,8 @@ class ZSSRPreprocessing(SRPreprocessingStrategy):
 
     def __len__(self):
         return self.num_patches
+
+    def update(self, new_hrs: list[torch.Tensor]) -> None:
+        for hr in new_hrs:
+            self._add_downsampled_versions(hr)
+
