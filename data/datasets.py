@@ -8,7 +8,7 @@ class AbstractSRDataset(Dataset, ABC):
     Generic SISR Dataset that delegate preprocessing operations to a SRPreprocessingStrategy.
     """
     def __init__(self, root_dir: str, scale_factor: float, strategy: SRPreprocessingStrategy, ext: str):
-        self.scale_factor = scale_factor
+        self.scale_factor = self.curr_s_i = scale_factor
         self.strategy = strategy
 
         self.strategy.prepare(root_dir, ext)
@@ -18,6 +18,12 @@ class AbstractSRDataset(Dataset, ABC):
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         return self._check(self.strategy.sample(idx, self.scale_factor))
+
+    def add_image(self, image: torch.Tensor) -> None:
+        """
+        Add to the dataset the new image, using the preprocessing strategy.
+        """
+        new_pairs = self.strategy.update([image])
     
     def _check(self, item: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -28,6 +34,7 @@ class AbstractSRDataset(Dataset, ABC):
     
 
 class Urban100Dataset(AbstractSRDataset):
+    # TODO their root_dir should be a constant for ResNet and a given dir for ZSSR depending on the test image
     def __init__(self, root_dir: str, scale_factor: float, strategy: SRPreprocessingStrategy):
         super().__init__(root_dir, scale_factor, strategy, ext="*.png")
 

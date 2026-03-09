@@ -61,7 +61,7 @@ class ZSSRPreprocessing(SRPreprocessingStrategy):
         return transformsF.to_tensor(Image.open(image_path).convert('RGB'))
 
     def _add_downsampled_versions(self, img: torch.Tensor):
-        hr_scales = np.linspace(1.0, 0.5, self.num_hr_scales)
+        hr_scales = np.linspace(1.0, 0.8, self.num_hr_scales)
         _, h, w = img.shape
         for s in hr_scales:
             new_h, new_w = int(h * s), int(w * s)
