@@ -34,3 +34,8 @@ class Urban100Dataset(AbstractSRDataset):
 class BSD100Dataset(AbstractSRDataset):
     def __init__(self, root_dir: str, scale_factor: float, strategy: SRPreprocessingStrategy):
         super().__init__(root_dir, scale_factor, strategy, ext="*.png")
+
+# for training ResNet
+class COCODataset(AbstractSRDataset):
+    def __init__(self, root_dir: str, scale_factor: float, strategy: SRPreprocessingStrategy):
+        super().__init__(root_dir, scale_factor, strategy, ext="*.jpg")
