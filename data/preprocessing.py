@@ -30,8 +30,42 @@ class SRPreprocessingStrategy(ABC):
         pass
 
 class ResNetPreprocessing(SRPreprocessingStrategy):
-    # TODO
-    pass
+    def __init__(self, crop_size=96, train=True):
+        self.crop_size = crop_size
+        self.train = train 
+        self.img_paths = []
+
+    def prepare(self, root_dir: str, ext: str):
+        search_path = os.path.join(root_dir, "**", ext)
+        self.img_paths = glob.glob(search_path, recursive=True)
+
+    def sample(self, idx: int, scale_factor: float) -> tuple[torch.Tensor, torch.Tensor]:
+        hr_img = Image.open(self.img_paths[idx]).convert('RGB')
+        hr_tensor = transformsF.to_tensor(hr_img)
+
+        if self.train:
+            # use random crops
+            i, j, h, w = transforms.RandomCrop.get_params(hr_tensor, (self.crop_size, self.crop_size))
+            hr_target = transformsF.crop(hr_tensor, i, j, h, w)
+
+        else:
+            # use full image
+            h, w = hr_tensor.shape[1], hr_tensor.shape[2]
+            new_size = (h // int(scale_factor)) * int(scale_factor), (w // int(scale_factor)) * int(scale_factor)
+            hr_target = transformsF.center_crop(hr_tensor, list(new_size))
+
+         # Generate LR image
+        lr_size = (hr_target.shape[1] // int(scale_factor), hr_target.shape[2] // int(scale_factor))
+        lr_target = transformsF.resize(hr_target, list(lr_size), interpolation=transforms.InterpolationMode.BICUBIC)
+        
+        # Scale HR to [-1, 1] according to paper
+        hr_target = (hr_target * 2.0) - 1.0
+
+        return lr_target, hr_target
+    
+    def __len__(self):
+        return len(self.img_paths)
+       
 
 class ZSSRPreprocessing(SRPreprocessingStrategy):
     """
