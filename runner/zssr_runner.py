@@ -1,12 +1,13 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torchvision.transforms.functional as transformsF
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.data import DataLoader
 from model.zssr_model import ZSSRConvNet
 from data.datasets import AbstractSRDataset
-from data.utils import zssr_collate_fn
+from data.utils import augment, zssr_collate_fn
 
 class ZSSRRunner:
     def __init__(self):
@@ -19,9 +20,9 @@ class ZSSRRunner:
             'grad_mag': []
         }
 
-    def run(self, dataset: AbstractSRDataset, out_size: torch.Size, n_epochs=10, n_scale_factors=6) -> torch.Tensor:
+    def run(self, dataset: AbstractSRDataset, out_size: torch.Size, n_epochs=10, n_scale_factors=6):
         """
-        Trains the model on the internal patches of the test image and returns the predicted HR test image.
+        Trains the model on the internal patches of the test image.
         """
         test_img = dataset.strategy.base_img.unsqueeze(0).to(self.device)
         dataloader = DataLoader(dataset, batch_size=1, shuffle=True)#, collate_fn=zssr_collate_fn)
@@ -63,16 +64,10 @@ class ZSSRRunner:
 
             model.eval()
             with torch.no_grad():
-                h, w = test_img.shape[-2:]
-                new_hr_size = (int(h * s_i), int(w * s_i))
-                interpol = nn.functional.interpolate(test_img, out_size, mode="bicubic")
-                new_hr = model(test_img, new_hr_size).squeeze(0)
-                dataset.add_image(new_hr)
+                dataset.add_image(self._generate_intermediate_hr(model, test_img, s_i))
+        
         model.eval()
-        interpol = nn.functional.interpolate(test_img, out_size, mode="bicubic")
-        hr_out = model(test_img, out_size).squeeze(0)
-                
-        return hr_out, interpol.squeeze(0), model
+        return self._predict(model, test_img, out_size).squeeze(0)
 
     def _reset_lr(self, optimizer: optim.Optimizer):
         for param_group in optimizer.param_groups:
@@ -89,6 +84,38 @@ class ZSSRRunner:
                 param_norm = p.grad.data.norm(2)
                 grad_mag += param_norm.item() ** 2
         return grad_mag ** 0.5
+
+    def _generate_intermediate_hr(self, model: torch.nn.Module, test_img: torch.Tensor, s_i: float) -> torch.Tensor:
+        h, w = test_img.shape[-2:]
+        new_hr_size = (int(h * s_i), int(w * s_i))
+        return model(test_img, new_hr_size).squeeze(0)
+
+    def _predict(self, model: ZSSRConvNet, lr_img: torch.Tensor, out_size: torch.Size) -> torch.Tensor:
+        augmented_lr_images = augment(lr_img) 
+        outputs = []
+        
+        for idx, aug_img in enumerate(augmented_lr_images):            
+            k = idx // 2
+            is_flipped = (idx % 2 == 1)
+            
+            if k % 2 != 0:
+                curr_out_size = (out_size[1], out_size[0])
+            else:
+                curr_out_size = out_size
+                
+            aug_out = model(aug_img, curr_out_size)
+            
+            if is_flipped:
+                aug_out = transformsF.hflip(aug_out)
+                
+            aug_out_reversed = torch.rot90(aug_out, -k, dims=[-2, -1]) 
+            
+            outputs.append(aug_out_reversed)
+            
+        stacked_outputs = torch.stack(outputs)
+        final_prediction, _ = torch.median(stacked_outputs, dim=0)
+        
+        return final_prediction
 
 class LinearFitLossLR(lr_scheduler.LRScheduler):
     """

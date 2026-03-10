@@ -17,7 +17,7 @@ class AbstractSRDataset(Dataset, ABC):
         return len(self.strategy)
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
-        return self._check(self.strategy.sample(idx, self.scale_factor))
+        return self._check(self.strategy.sample(idx, self.curr_s_i))
 
     def add_image(self, image: torch.Tensor) -> None:
         """

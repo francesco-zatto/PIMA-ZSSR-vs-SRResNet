@@ -7,7 +7,7 @@ def augment(img: torch.Tensor) -> list[torch.Tensor]:
     ks = [angle // 90 for angle in rotations]
     augmented_images = []
     for k in ks:
-        rotated_img = torch.rot90(img, k, dims=[1, 2])
+        rotated_img = torch.rot90(img, k, dims=[-2, -1])
         hflip_img = transformsF.hflip(rotated_img)
         augmented_images.extend([rotated_img, hflip_img])
     return augmented_images
