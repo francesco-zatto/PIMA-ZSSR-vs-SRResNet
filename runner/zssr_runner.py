@@ -23,15 +23,17 @@ class ZSSRRunner:
         """
         Trains the model on the internal patches of the test image and returns the predicted HR test image.
         """
+        test_img = dataset.strategy.base_img.unsqueeze(0).to(self.device)
         dataloader = DataLoader(dataset, batch_size=1, shuffle=True)#, collate_fn=zssr_collate_fn)
         model = ZSSRConvNet().to(self.device) 
         optimizer = optim.Adam(model.parameters(), lr=self.learning_rate)
+        scheduler = LinearFitLossLR(optimizer)
         print(f"--- Training ZSSR for {n_epochs} epochs ---")
 
         scale_factors = np.linspace(1.0, dataset.scale_factor, n_scale_factors+1)[1:]
 
         for s_i in scale_factors:
-            scheduler = LinearFitLossLR(optimizer)
+            self._reset_lr(optimizer)
             dataset.curr_s_i = s_i
             model.train()
             print(f"--- Training ZSSR with s_i={s_i} ---")
@@ -42,9 +44,7 @@ class ZSSRRunner:
                     lr_patch, hr_true = lr_patch.to(self.device), hr_patch.to(self.device)
                     hr_spatial_dims = hr_true.shape[-2:]
 
-                    noise_std = 5.0 / 255.0
-                    noise = torch.randn_like(lr_patch) * noise_std
-                    lr_patch += noise
+                    lr_patch += self._compute_noise(lr_patch.shape)
                     
                     optimizer.zero_grad()
                     hr_pred = model(lr_patch, hr_spatial_dims)
@@ -53,14 +53,7 @@ class ZSSRRunner:
                     optimizer.step()
                     scheduler.step(loss.item())
 
-                    grad_mag = 0.0
-                    for p in model.parameters():
-                        if p.grad is not None:
-                            # Square the L2 norm of the gradients for each parameter
-                            param_norm = p.grad.data.norm(2)
-                            grad_mag += param_norm.item() ** 2
-                    grad_mag = grad_mag ** 0.5
-                    epoch_grad += grad_mag
+                    epoch_grad += self._compute_grad_mag(model)
                     epoch_loss += loss.item()
             
                 self.history['grad_mag'].append(epoch_grad / len(dataloader))
@@ -70,18 +63,32 @@ class ZSSRRunner:
 
             model.eval()
             with torch.no_grad():
-                test_img = dataset.strategy.base_img.unsqueeze(0).to(self.device)
                 h, w = test_img.shape[-2:]
                 new_hr_size = (int(h * s_i), int(w * s_i))
                 interpol = nn.functional.interpolate(test_img, out_size, mode="bicubic")
                 new_hr = model(test_img, new_hr_size).squeeze(0)
-
+                dataset.add_image(new_hr)
         model.eval()
-        test_img = dataset.strategy.base_img.unsqueeze(0).to(self.device)
         interpol = nn.functional.interpolate(test_img, out_size, mode="bicubic")
         hr_out = model(test_img, out_size).squeeze(0)
                 
         return hr_out, interpol.squeeze(0), model
+
+    def _reset_lr(self, optimizer: optim.Optimizer):
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = self.learning_rate
+
+    def _compute_noise(self, lr_size: torch.Size) -> torch.Tensor:
+        noise_std = 5.0 / 255.0
+        return torch.randn(lr_size, device=self.device) * noise_std
+
+    def _compute_grad_mag(self, model: ZSSRConvNet) -> float:
+        grad_mag = 0.0
+        for p in model.parameters():
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(2)
+                grad_mag += param_norm.item() ** 2
+        return grad_mag ** 0.5
 
 class LinearFitLossLR(lr_scheduler.LRScheduler):
     """
