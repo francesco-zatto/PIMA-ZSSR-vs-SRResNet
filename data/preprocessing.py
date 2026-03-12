@@ -72,6 +72,10 @@ class ResNetPreprocessing(SRPreprocessingStrategy):
     
     def __len__(self):
         return len(self.img_paths)
+
+    def update(self, new_hrs: list[torch.Tensor]) -> None:
+        # No dynamic updates needed for ResNet strategy
+        pass
        
 
 class ZSSRPreprocessing(SRPreprocessingStrategy):
