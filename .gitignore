@@ -7,3 +7,7 @@ env/
 .vscode/
 
 .DS_Store
+
+# Ignore files for gpu transfer
+pack_code.sh
+21502054.zip
