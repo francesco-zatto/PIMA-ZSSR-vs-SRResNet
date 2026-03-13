@@ -7,3 +7,8 @@ env/
 .vscode/
 
 .DS_Store
+
+datasets/*
+outputs/*
+*.zip
+
