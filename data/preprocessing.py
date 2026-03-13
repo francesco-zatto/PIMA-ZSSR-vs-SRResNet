@@ -82,50 +82,70 @@ class ZSSRPreprocessing(SRPreprocessingStrategy):
         self.num_patches = num_patches
         self.num_hr_scales = num_hr_scales
         self.crop_size = crop_size
-        self.pool_fathers: dict[float, list[torch.Tensor]] = {}
-        self.sampling_probs: dict[float, float] = {}
-        self.base_img = None
+        self.pool_fathers: list[torch.Tensor] = [] 
+        self.father_weights: list[float] = []
+        self.base_img: torch.Tensor = None 
 
     def prepare(self, root_dir: str, ext: str):
+        """
+        Create initial dataset from test_img.
+        """
         image_path = glob.glob(os.path.join(root_dir, ext))[0]
         self.base_img = self._load_image(image_path)
         self._add_downsampled_versions(self.base_img)
 
     def _load_image(self, image_path: str) -> torch.Tensor:
+        """
+        Read image as PIL.Image and then convert to tensor in [0, 1] range
+        """
         return transformsF.to_tensor(Image.open(image_path).convert('RGB'))
 
     def _add_downsampled_versions(self, img: torch.Tensor):
+        """
+        Create self.num_hr_scales downsampled versions of img to increase the HRs pool.
+        """
         hr_scales = np.linspace(1.0, 0.8, self.num_hr_scales)
         _, h, w = img.shape
         for s in hr_scales:
             new_h, new_w = int(h * s), int(w * s)
             resized = transformsF.resize(img, (new_h, new_w), 
                                          interpolation=transforms.InterpolationMode.BICUBIC)
-            self._add_to_pool(resized, (h, w))
+            self._add_to_pool(resized)
 
-    def _add_to_pool(self, hr_image: torch.Tensor, original_dims: tuple[int, int]):
+    def _add_to_pool(self, hr_image: torch.Tensor):
+        """
+        Add an image to the pool of HR father images, computing its sampling probability.
+        """
         augmented_images = augment(hr_image)
         
-        ratio = (hr_image.shape[1] * hr_image.shape[2]) / (original_dims[0] * original_dims[1])
-        self.pool_fathers.setdefault(ratio, []).extend(augmented_images)
-        
-        ratios = np.array(list(self.pool_fathers.keys()))
-        probs = ratios / np.sum(ratios)
-        self.sampling_probs = dict(zip(ratios, probs))
+        hr_area = hr_image.shape[1] * hr_image.shape[2]
+        base_area = self.base_img.shape[1] * self.base_img.shape[2]
+        size_ratio = hr_area / base_area
 
-    def sample(self, idx: int, scale_factor: float) -> tuple[torch.Tensor, torch.Tensor]:
-        ratios = list(self.pool_fathers.keys())
-        probs = [self.sampling_probs[r] for r in ratios]
-        extracted_ratio = np.random.choice(ratios, p=probs)
+        # Weight proportional to how close are to base_img size
+        weight = size_ratio if size_ratio <= 1.0 else 1.0 / size_ratio
         
-        hr_father = random.choice(self.pool_fathers[extracted_ratio])
+        self.pool_fathers.extend(augmented_images)
+        self.father_weights.extend([weight] * len(augmented_images))
+        print(f'Weights: {self.father_weights}')
+        
+    def sample(self, idx: int, scale_factor: float) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Sample a HR father according to the probability distribution derived by ratios with original LR size.
+        From HR, take a patch and create a LR to use as input for the model.
+        """
+        hr_father = random.choices(self.pool_fathers, weights=self.father_weights, k=1)[0]
         hr_crop = self._crop(hr_father)
         
         lr_size = (int(hr_crop.shape[1] / scale_factor), int(hr_crop.shape[2] / scale_factor))
         lr_crop = transformsF.resize(hr_crop, lr_size, interpolation=transforms.InterpolationMode.BICUBIC)
+        
         return lr_crop, hr_crop
 
     def _crop(self, hr_image: torch.Tensor) -> torch.Tensor:
+        """
+        Take a random crop of HR image if HR is large enough.
+        """
         _, h, w = hr_image.shape
         if h < self.crop_size or w < self.crop_size:
             return hr_image
