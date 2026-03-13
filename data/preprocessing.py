@@ -127,7 +127,6 @@ class ZSSRPreprocessing(SRPreprocessingStrategy):
         
         self.pool_fathers.extend(augmented_images)
         self.father_weights.extend([weight] * len(augmented_images))
-        print(f'Weights: {self.father_weights}')
         
     def sample(self, idx: int, scale_factor: float) -> tuple[torch.Tensor, torch.Tensor]:
         """

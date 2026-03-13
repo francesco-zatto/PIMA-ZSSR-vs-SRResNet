@@ -153,7 +153,7 @@ class LinearFitLossLR(lr_scheduler.LRScheduler):
     Custom Learning Rate Scheduler that periodically fits a linear regression to the recent reconstruction errors (losses).
     If the standard deviation of the errors is greater than the slope by a certain factor, it divides the learning rate by 10.
     """
-    def __init__(self, optimizer: optim.Adam, window_size=2048, slope_factor=20.0, min_lr=1e-6):
+    def __init__(self, optimizer: optim.Adam, window_size=512, slope_factor=20.0, min_lr=1e-6):
         super().__init__(optimizer)
         self.window_size = window_size
         self.slope_factor = slope_factor
