@@ -242,13 +242,18 @@ class ZSSRRunner(AbstractRunner):
                 intermediate_hr = self._generate_intermediate_hr(self.model, self.test_img, s_i).detach().cpu()
                 dataset.add_image(intermediate_hr)
 
-    def evaluate(self, hr_true: torch.Tensor, save_hr=True) -> dict:
-        self.model.eval()
-        with torch.no_grad():
-            hr_pred = self._predict()
-            self.metrics.update(hr_pred, hr_true)
-        
-        return self.metrics.compute()
+import torch
+
+def evaluate(self, hr_true: torch.Tensor, save_hr: bool = True) -> dict | tuple[dict, torch.Tensor]:
+    self.model.eval()
+    with torch.no_grad():
+        hr_pred = self._predict()
+        self.metrics.update(hr_pred, hr_true)
+    
+    results = self.metrics.compute()
+    if save_hr:
+        return results, hr_pred
+    return results
 
     def _reset_lr(self, optimizer: optim.Optimizer):
         """
