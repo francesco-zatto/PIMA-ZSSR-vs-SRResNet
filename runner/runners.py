@@ -184,7 +184,7 @@ class ZSSRRunner(AbstractRunner):
         }
         self.metrics = SRMetricSuite(self.device)
 
-    def train(self, dataset: AbstractSRDataset, out_size: torch.Size, n_epochs=10, n_scale_factors=6) -> None:
+    def train(self, dataset: AbstractSRDataset, out_size: torch.Size, n_epochs=50, n_scale_factors=6) -> None:
         """
         Trains the model on the internal patches of the test image.
         """
@@ -242,18 +242,16 @@ class ZSSRRunner(AbstractRunner):
                 intermediate_hr = self._generate_intermediate_hr(self.model, self.test_img, s_i).detach().cpu()
                 dataset.add_image(intermediate_hr)
 
-import torch
-
-def evaluate(self, hr_true: torch.Tensor, save_hr: bool = True) -> dict | tuple[dict, torch.Tensor]:
-    self.model.eval()
-    with torch.no_grad():
-        hr_pred = self._predict()
-        self.metrics.update(hr_pred, hr_true)
-    
-    results = self.metrics.compute()
-    if save_hr:
-        return results, hr_pred
-    return results
+    def evaluate(self, hr_true: torch.Tensor, save_hr: bool = True) -> dict | tuple[dict, torch.Tensor]:
+        self.model.eval()
+        with torch.no_grad():
+            hr_pred = self._predict()
+            self.metrics.update(hr_pred, hr_true)
+        
+        results = self.metrics.compute()
+        if save_hr:
+            return results, hr_pred
+        return results
 
     def _reset_lr(self, optimizer: optim.Optimizer):
         """

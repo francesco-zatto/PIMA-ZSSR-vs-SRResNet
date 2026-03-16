@@ -21,7 +21,7 @@ if __name__ == "__main__":
         runner=zssr_runner,
         dataset_zip_path=config.URBAN100_ZIP,
         datasets_dir=config.DATASET_DIR,
-        output_dir=config.ZSSR_OUTPUT_DIR + config.URBAN100_NAME,
+        output_dir=config.ZSSR_OUTPUT_DIR / config.URBAN100_NAME,
         scale_factor=4.0
     )
 

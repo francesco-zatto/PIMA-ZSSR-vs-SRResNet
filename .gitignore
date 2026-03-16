@@ -9,6 +9,7 @@ env/
 .DS_Store
 
 datasets/*
+outputs/*
 
 # Ignore files for gpu transfer
 pack_code.sh
