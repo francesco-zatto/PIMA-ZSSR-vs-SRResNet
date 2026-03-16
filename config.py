@@ -4,10 +4,17 @@ from pathlib import Path
 # Root Directory
 ROOT_DIR = Path(__file__).parent
 
+URBAN100_NAME = "Urban100"
+BSD100_NAME = "BSD100"
+
 # Dataset Paths
 DATASET_DIR = ROOT_DIR / "datasets"
-URBAN100_DIR = DATASET_DIR / "Urban100"
-BSD100_DIR = DATASET_DIR / "BSD100"
+URBAN100_DIR = DATASET_DIR / URBAN100_NAME
+BSD100_DIR = DATASET_DIR / BSD100_NAME
+
+# ZIP Paths
+URBAN100_ZIP = DATASET_DIR / f"{URBAN100_NAME}.zip"
+BSD100_ZIP = DATASET_DIR / f"{BSD100_NAME}.zip"
 
 # Output Paths
 OUTPUT_DIR = ROOT_DIR / "outputs"
