@@ -21,7 +21,7 @@ if __name__ == "__main__":
     # TRAINING
 
     # Initialize training dataset
-    train_image_dir = "train_images"
+    train_image_dir = "train2014"
     print(f"Preparing dataset from {train_image_dir}...")
     train_dataset = COCODataset(
         root_dir=train_image_dir, 
@@ -53,20 +53,20 @@ if __name__ == "__main__":
     # TESTING 
     
     # Initialize test dataset
-    test_image_dir = "test_images"
-    print(f"Preparing dataset from {test_image_dir}...")
-    test_dataset = Urban100Dataset(
-        root_dir=test_image_dir, 
-        scale_factor=4, 
-        strategy=ResNetPreprocessing(train=False)
-    )
+    #test_image_dir = "test_images"
+    #print(f"Preparing dataset from {test_image_dir}...")
+    #test_dataset = Urban100Dataset(
+    #    root_dir=test_image_dir, 
+    #    scale_factor=4, 
+    #    strategy=ResNetPreprocessing(train=False)
+    #)
 
-    test_output = runner.evaluate(dataset=test_dataset)
+    #test_output = runner.evaluate(dataset=test_dataset)
 
     # TODO: convert model output from [-1, 1] to [0, 1]
     # TODO: visualize test output
     # TODO: calculate PSNR and SSIM for training and testing output
 
-    print("Testing complete.")
+    #print("Testing complete.")
 
 
