@@ -67,7 +67,15 @@ class SRPipeline:
                 hr_true = hr_true[..., :min_h, :min_w]
                 
                 # Call evaluate (ZSSR style)
-                results = self.runner.evaluate(hr_true=hr_true)
+                results, hr_pred = self.runner.evaluate(hr_true=hr_true, save_hr=True)
+
+                pred_tensor = hr_pred.squeeze(0).cpu().clamp(0, 1)
+                pred_pil = transformsF.to_pil_image(pred_tensor)
+                
+                save_filename = f"{lr_img_path.stem}_ZSSR_pred.png"
+                save_path = self.output_dir / save_filename
+                pred_pil.save(save_path)
+                print(f"Saved ZSSR prediction to: {save_path.name}")
                 
             else:
                 # ResNet preprocessing generates the LR internally from the HR image, so we pass HR
