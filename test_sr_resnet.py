@@ -3,7 +3,6 @@ from pathlib import Path
 
 import torch
 
-from runner.zssr_runner import ZSSRRunner
 sys.path.append(str(Path(__file__).parent))
 
 import matplotlib.pyplot as plt
@@ -11,7 +10,8 @@ import matplotlib.pyplot as plt
 from data.datasets import Urban100Dataset, BSD100Dataset, COCODataset
 from data.preprocessing import ResNetPreprocessing
 
-from runner.sr_resnet_runner import SRResNetRunner
+from runner.runners import SRResNetRunner
+from eval.pipeline import SRPipeline
 
 BATCH_SIZE = 16
 TOTAL_ITERATIONS = 1e6
@@ -32,6 +32,16 @@ if __name__ == "__main__":
     # instantiate the SRResNet pipeline
     print("Initializing SRResNet Runner...")
     runner = SRResNetRunner()
+    pipeline = SRPipeline(
+        runner=runner,
+        dataset_zip_path="datasets/Urban100.zip",
+        datasets_dir="datasets",
+        output_dir="outputs/zssr_urban100",
+        scale_factor=4.0)
+    # train_dataset = COCODataset(...) # Your large global dataset
+
+    # Assuming you loaded weights into resnet_runner or zssr_runner via checkpoint 
+    pipeline.run()
 
     # run the training process
     print("Starting training...")

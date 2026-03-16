@@ -1,5 +1,6 @@
 import torch
-from torchmetrics import MetricCollection, PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
+from torchmetrics import MetricCollection
+from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
 
 class SRMetricSuite:
     def __init__(self, device):

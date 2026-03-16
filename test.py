@@ -7,7 +7,8 @@ import matplotlib.pyplot as plt
 from data.datasets import Urban100Dataset
 from data.preprocessing import ZSSRPreprocessing
 
-from runner.zssr_runner import ZSSRRunner
+from runner.runners import ZSSRRunner
+from eval.pipeline import SRPipeline
 
 import torch
 import torchvision.transforms.functional as transformsF
@@ -79,18 +80,29 @@ def save_training_plot(history: dict, filepath: str = "training_metrics.png"):
     
     print(f"Training plot successfully saved to: {filepath}")
 
-NUM_PATCHES = 512
+NUM_PATCHES = 64
 BATCH_SIZE = 1
 SCALE_FACTOR = 4
-N_EPOCHS = 10
+N_SCALE_FACTORS = 3
+N_EPOCHS = 20
 
 if __name__ == "__main__":
-    
+
+    zssr_runner = ZSSRRunner()
+    pipeline = SRPipeline(
+        runner=zssr_runner,
+        dataset_zip_path="datasets/Urban100.zip",
+        datasets_dir="datasets",
+        output_dir="outputs/zssr_urban100",
+        scale_factor=4.0
+    )
+
+    pipeline.run(n_epochs=40)
+    """
     # print_cuda_info()
     
     # 1. Initialize the Dataset
-    image_dir = "report/images/test_eye"
-    gt = transformsF.to_tensor(Image.open("report/images/HR/HR_SISR_example.png").convert('RGB'))
+    image_dir = "prova/jfk"
     print(f"Preparing dataset from {image_dir}...")
     dataset = Urban100Dataset(
         root_dir=image_dir, 
@@ -106,25 +118,16 @@ if __name__ == "__main__":
     print("Starting training...")
     out_size = tuple(int(dim * SCALE_FACTOR) for dim in dataset.strategy.base_img.shape[-2:])
     print(out_size)
-    sr_output, sr_output_interpol, model = runner.run(dataset, out_size, n_epochs=N_EPOCHS)
+    sr_output = runner.run(dataset, out_size, n_epochs=N_EPOCHS)
 
     sr_img = np.clip(sr_output.detach().cpu().permute(1, 2, 0).numpy(), 0.0, 1.0) 
-    sr_img_interpol = np.clip(sr_output_interpol.detach().cpu().permute(1, 2, 0).numpy(), 0.0, 1.0)
-    gt_np = gt.permute(1, 2, 0).numpy()
-    # diff_with_gt = np.clip(sr_img - gt_np, 0.0, 1.0)
-    # interpol_diff_with_gt = np.clip(sr_img_interpol - gt_np, 0.0, 1.0) 
 
-    last_layer = model.network[-1]
-    print(f"\nTotal sum of weights: {last_layer.weight.sum().item()}")
-    print(f"Total sum of biases:  {last_layer.bias.sum().item()}")
-
-    
     # 4. (Optional) Visualize the final output if your run() method returns the tensor
     if sr_output is not None:
-        plt.imsave("out_zssr_interpol.png", sr_img_interpol)
         plt.imsave("out_zssr.png", sr_img)
         # plt.imsave("diff_model.png", diff_with_gt)
         # plt.imsave("diff_interpol.png", interpol_diff_with_gt)
         save_training_plot(runner.history, filepath="training_metrics_no_res_conn.png")
     else:
         print("Training complete.")
+    """
