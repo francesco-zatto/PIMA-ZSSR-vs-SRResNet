@@ -72,6 +72,9 @@ class ResNetPreprocessing(SRPreprocessingStrategy):
     
     def __len__(self):
         return len(self.img_paths)
+
+    def update(self, new_hrs) -> None:
+        return None
        
 
 class ZSSRPreprocessing(SRPreprocessingStrategy):

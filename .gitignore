@@ -9,6 +9,4 @@ env/
 .DS_Store
 
 datasets/*
-outputs/*
-*.zip
 
