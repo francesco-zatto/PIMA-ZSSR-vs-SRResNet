@@ -82,19 +82,22 @@ class SRPipeline:
             
             for lr_path in lr_image_paths:
                 # Attempt to pair LR with Ground Truth HR
-                hr_name = lr_path.name.replace('LR', 'HR').replace('x4', '')
-                hr_path_candidates = list(extracted_dir.rglob(hr_name))
-                
-                if not hr_path_candidates and lr_path.parent.name == "LR":
+                hr_path_candidates = []
+                if lr_path.parent.name == "LR":
                     possible_hr = lr_path.parent.parent / "HR" / lr_path.name
                     if possible_hr.exists():
                         hr_path_candidates.append(possible_hr)
+                
+                if not hr_path_candidates:
+                    hr_name = lr_path.name.replace('LR', 'HR').replace('x4', '')
+                    hr_path_candidates = list(extracted_dir.rglob(hr_name))
                         
                 if not hr_path_candidates:
                     print(f"Warning: Could not find HR ground truth for {lr_path.name}. Skipping.")
                     continue
                     
                 hr_path = hr_path_candidates[0]
+                print(lr_path, hr_path)
                 self.process_image(lr_path, hr_path, csv_writer, **kwargs)
                 
         print(f"\nPipeline evaluation completed successfully! Results saved to {csv_path}")
