@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
+from IPython.display import display
+
 import config
 
 def generate_comparison_plots(folder_paths, output_dir="outputs/plots"):
@@ -128,3 +130,29 @@ def generate_comparison_plots(folder_paths, output_dir="outputs/plots"):
     bar_path = Path(output_dir) / "comparison_boxplot.png"
     plt.savefig(bar_path, dpi=300)
     plt.close()
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 4))
+plt.close(fig) 
+
+def plot_layer_distributions(epoch: int, layer_stats: dict[str, list[float]]):
+    ax1.clear()
+    ax2.clear()
+    
+    # Plot Weight Histogram
+    weights = layer_stats['weights'][epoch]
+    ax1.hist(weights, bins=50, color='royalblue', alpha=0.7)
+    ax1.set_title(f'Weight Distribution (Epoch {epoch})')
+    ax1.set_xlabel('Weight Value')
+    ax1.set_ylabel('Frequency')
+    ax1.grid(axis='y', alpha=0.3)
+    
+    # Plot Gradient Histogram
+    grads = layer_stats['gradients'][epoch]
+    ax2.hist(grads, bins=50, color='darkorange', alpha=0.7)
+    ax2.set_title(f'Gradient Distribution (Epoch {epoch})')
+    ax2.set_xlabel('Gradient Value')
+    ax2.grid(axis='y', alpha=0.3)
+    
+    plt.tight_layout()
+    
+    display(fig)

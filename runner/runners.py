@@ -182,6 +182,10 @@ class ZSSRRunner(AbstractRunner):
             'loss': [],
             'grad_mag': []
         }
+        self.layer_stats = {
+            'weights': [], 
+            'gradients': []
+        }
         self.metrics = SRMetricSuite(self.device)
 
     def train(self, dataset: AbstractSRDataset, out_size: torch.Size, n_epochs=50, n_scale_factors=6) -> None:
@@ -228,6 +232,8 @@ class ZSSRRunner(AbstractRunner):
                     optimizer.step()
                     scheduler.step(loss.item())
 
+                    self._capture_layer_stats(self.model.final_conv)
+
                     epoch_grad += self._compute_grad_mag(self.model)
                     epoch_loss += loss.item()
             
@@ -241,6 +247,23 @@ class ZSSRRunner(AbstractRunner):
             with torch.no_grad():
                 intermediate_hr = self._generate_intermediate_hr(self.model, self.test_img, s_i).detach().cpu()
                 dataset.add_image(intermediate_hr)
+
+    def _capture_layer_stats(self, layer: nn.Module):
+        if hasattr(layer, 'weight'):
+            target_layer = layer         
+        elif hasattr(layer, 'conv'):
+            target_layer = layer.conv    
+        else:
+            raise ValueError("The provided layer does not contain a weight attribute.")
+
+        w = target_layer.weight.detach().cpu().numpy().flatten()
+        self.layer_stats['weights'].append(w)
+        
+        if target_layer.weight.grad is not None:
+            g = target_layer.weight.grad.detach().cpu().numpy().flatten()
+            self.layer_stats['gradients'].append(g)
+        else:
+            self.layer_stats['gradients'].append(np.zeros_like(w))
 
     def evaluate(self, hr_true: torch.Tensor, save_hr: bool = True) -> dict | tuple[dict, torch.Tensor]:
         self.model.eval()
