@@ -98,6 +98,7 @@ def generate_comparison_plots(folder_paths, output_dir="outputs/plots"):
     plt.tight_layout()
     bar_path = Path(output_dir) / "comparison_barplot.png"
     plt.savefig(bar_path, dpi=300)
+    plt.show()
     plt.close()
 
     # Box Plots (Distributions)
