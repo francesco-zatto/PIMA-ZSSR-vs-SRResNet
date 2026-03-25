@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
+import time
 import numpy as np
 import torch
 import torch.nn as nn
@@ -40,29 +41,42 @@ class SRResNetRunner(AbstractRunner):
         
         self.metrics = SRMetricSuite(self.device)
 
-    def train(self, dataset, total_iterations, batch_size):
-        
-        def init_weights(m):
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-
-        dataloader = DataLoader(dataset, batch_size=batch_size ,shuffle=True)
-        self.model = SRResNet().to(self.device) 
-        self.model.apply(init_weights)
+    def train(self, dataset, total_iterations, batch_size, checkpoint_save_path=None, checkpoint_load_path=None):
+        self.model = SRResNet().to(self.device)
         optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate, betas=(0.9, 0.999))
+        current_iteration = 0
 
-        print(f"--- Training SRResNet for {total_iterations} iterations ---")
+        # 2. Load checkpoint if path is provided
+        if checkpoint_load_path is not None:
+            print(f"--- Resuming training from checkpoint: {checkpoint_load_path} ---")
+            # We overwrite model, optimizer, and the starting iteration count
+            self.model, optimizer, current_iteration = self._load_checkpoint(checkpoint_load_path)
+        else:
+            # If starting from scratch, apply weight initialization
+            def init_weights(m):
+                if isinstance(m, nn.Conv2d):
+                    nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            self.model.apply(init_weights)
+            print(f"--- Starting training from scratch ---")
+
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        print(f"--- Training SRResNet for {total_iterations} total iterations ---")
 
         self.model.train()
-        current_iteration = 0
+        self.metrics.reset() # Clear metrics before starting
+        
+        # start time
+        t0 = time.time()
+        epoch_t0 = time.time()
+        
+        epoch = 0
         while current_iteration < total_iterations:
-            if current_iteration >= total_iterations:
-                break
+            epoch += 1
+            print(f"--- Starting Epoch {epoch} ---")
+            for lr_im, hr_im in dataloader:
+                if current_iteration >= total_iterations:
+                    break
 
-            if current_iteration % 5000 == 0:
-                self._save_checkpoint(current_iteration, self.model, optimizer, "srresnet_checkpoint_epoch_" + str(current_iteration) + ".pth")
-
-            for lr_im, hr_im in dataloader:                
                 lr_patch, hr_true = lr_im.to(self.device), hr_im.to(self.device)
                 
                 optimizer.zero_grad()
@@ -71,12 +85,59 @@ class SRResNetRunner(AbstractRunner):
                 loss.backward()
                 optimizer.step()
 
+                # metrics
+                # Detach from the graph to prevent memory leaks during tracking!
+                sr_01 = self._standardize_output(hr_pred.detach())
+                hr_01 = self._standardize_output(hr_true.detach())
+                self.metrics.update(sr_01, hr_01)
+
                 current_iteration += 1  
 
-            if current_iteration % 100 == 0:
-                    print(f"Iteration {current_iteration}/{total_iterations}, Loss: {loss.item():.6f}")
-                
-            print(f"End of iteration {current_iteration-1}, Loss: {loss.item():.6f}")
+                # Log loss and metrics every 100 iterations
+                if current_iteration % 100 == 0:
+                    results = self.metrics.compute()
+                    print(f"Iteration {current_iteration}/{total_iterations}, "
+                          f"Loss: {loss.item():.6f}, "
+                          f"Train PSNR: {results['psnr']:.2f} dB, "
+                          f"Train SSIM: {results['ssim']:.4f}, ")
+                    
+                    # Reset metrics so the next print reflects just the last 100 iterations
+                    self.metrics.reset() 
+
+                # Save checkpoint every 5000 iterations
+                if current_iteration % 5000 == 0:
+                    dir_path = checkpoint_save_path if checkpoint_save_path is not None else ""
+                    self._save_checkpoint(
+                        current_iteration, 
+                        self.model, 
+                        optimizer, 
+                        f"{dir_path}/srresnet_checkpoint_iter_{current_iteration}.pth"
+                    )
+                    print(f"Checkpoint saved at iteration {current_iteration}.")
+            
+            # log epoch time unconditionally 
+            print(f"End of epoch (Iteration {current_iteration}), Loss: {loss.item():.6f}")
+            t1 = time.time()
+            print(f"Time taken for epoch: {t1 - epoch_t0:.2f} seconds")
+            
+            # reset epoch timer for the next pass
+            epoch_t0 = time.time()
+
+        # end time
+        t_end = time.time()
+        print(f"Total training time: {t_end - t0:.2f} seconds")
+
+        if checkpoint_save_path is not None:
+            final_path = Path(checkpoint_save_path) / "srresnet_final.pth"
+            self._save_checkpoint(
+                current_iteration, 
+                self.model, 
+                optimizer, 
+                final_path
+            )
+            print(f"Final model saved to {final_path}")
+
+        return self.metrics.compute()
 
     def _save_checkpoint(self, iteration, model, optimizer, path):
         checkpoint = {
@@ -102,46 +163,15 @@ class SRResNetRunner(AbstractRunner):
         return (hr_pred + 1.0) / 2.0
 
 
-    def evaluate(self, dataset):
+    def evaluate(self, dataset, checkpoint_path=None):
         dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
         
-        # TODO: load model from checkpoint if available, else raise error if model is None
-        if self.model is None:
-            raise ValueError("Model has not been trained yet. Please train the model before evaluation.")
-        
-        self.model.eval()
-        self.metrics.reset() # Clear previous scores
-        
-        print("--- Evaluating Model ---")
-        
-        with torch.no_grad():
-            for lr_im, hr_im in dataloader:
-                lr_patch, hr_true = lr_im.to(self.device), hr_im.to(self.device)
-                
-                # forward pass
-                hr_pred = self.model(lr_patch)
-                
-                # Standardize both to [0, 1] before metric collection
-                # hr_pred is [-1, 1], hr_true is [-1, 1]
-                sr_01 = self._standardize_output(hr_pred)
-                hr_01 = self._standardize_output(hr_true)
-                
-                # update metrics
-                self.metrics.update(sr_01, hr_01)
-        
-        # Calculate the final average scores
-        results = self.metrics.compute()
-        
-        print(f"Results -> PSNR: {results['psnr']:.2f} dB, SSIM: {results['ssim']:.4f}")
-        return results
+        if checkpoint_path is not None:
+            print(f"Loading checkpoint from {checkpoint_path}...")
+            self.model, _, _ = self._load_checkpoint(checkpoint_path)
+        elif self.model is None:
+            raise ValueError("Model has not been trained yet and no checkpoint was provided. Please train the model or provide a checkpoint_path.")
 
-    def predict(self, dataset):
-        dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
-        
-        # TODO: load model from checkpoint if available, else raise error if model is None
-        if self.model is None:
-            raise ValueError("Model has not been trained yet. Please train the model before evaluation.")
-        
         self.model.eval()
         self.metrics.reset() # Clear previous scores
         
@@ -166,7 +196,40 @@ class SRResNetRunner(AbstractRunner):
         results = self.metrics.compute()
         
         print(f"Results -> PSNR: {results['psnr']:.2f} dB, SSIM: {results['ssim']:.4f}")
-        return results
+        return results, sr_01
+
+    # def predict(self, dataset):
+    #     dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
+        
+    #     # TODO: load model from checkpoint if available, else raise error if model is None
+    #     if self.model is None:
+    #         raise ValueError("Model has not been trained yet. Please train the model before evaluation.")
+        
+    #     self.model.eval()
+    #     self.metrics.reset() # Clear previous scores
+        
+    #     print("--- Evaluating Model ---")
+        
+    #     with torch.no_grad():
+    #         for lr_im, hr_im in dataloader:
+    #             lr_patch, hr_true = lr_im.to(self.device), hr_im.to(self.device)
+                
+    #             # forward pass
+    #             hr_pred = self.model(lr_patch)
+                
+    #             # Standardize both to [0, 1] before metric collection
+    #             # hr_pred is [-1, 1], hr_true is [-1, 1]
+    #             sr_01 = self._standardize_output(hr_pred)
+    #             hr_01 = self._standardize_output(hr_true)
+                
+    #             # update metrics
+    #             self.metrics.update(sr_01, hr_01)
+        
+    #     # Calculate the final average scores
+    #     results = self.metrics.compute()
+        
+    #     print(f"Results -> PSNR: {results['psnr']:.2f} dB, SSIM: {results['ssim']:.4f}")
+    #     return results
 
 
 class ZSSRRunner(AbstractRunner):
@@ -242,18 +305,16 @@ class ZSSRRunner(AbstractRunner):
                 intermediate_hr = self._generate_intermediate_hr(self.model, self.test_img, s_i).detach().cpu()
                 dataset.add_image(intermediate_hr)
 
-import torch
-
-def evaluate(self, hr_true: torch.Tensor, save_hr: bool = True) -> dict | tuple[dict, torch.Tensor]:
-    self.model.eval()
-    with torch.no_grad():
-        hr_pred = self._predict()
-        self.metrics.update(hr_pred, hr_true)
-    
-    results = self.metrics.compute()
-    if save_hr:
-        return results, hr_pred
-    return results
+    def evaluate(self, hr_true: torch.Tensor, save_hr: bool = True) -> dict | tuple[dict, torch.Tensor]:
+        self.model.eval()
+        with torch.no_grad():
+            hr_pred = self._predict()
+            self.metrics.update(hr_pred, hr_true)
+        
+        results = self.metrics.compute()
+        if save_hr:
+            return results, hr_pred
+        return results
 
     def _reset_lr(self, optimizer: optim.Optimizer):
         """
@@ -323,41 +384,41 @@ def evaluate(self, hr_true: torch.Tensor, save_hr: bool = True) -> dict | tuple[
         
         return final_prediction
 
-class LinearFitLossLR(lr_scheduler.LRScheduler):
-    """
-    Custom Learning Rate Scheduler that periodically fits a linear regression to the recent reconstruction errors (losses).
-    If the standard deviation of the errors is greater than the slope by a certain factor, it divides the learning rate by 10.
-    """
-    def __init__(self, optimizer: optim.Adam, window_size=512, slope_factor=20.0, min_lr=1e-6):
-        super().__init__(optimizer)
-        self.window_size = window_size
-        self.slope_factor = slope_factor
-        self.min_lr = min_lr
-        self.losses = []
+    class LinearFitLossLR(lr_scheduler.LRScheduler):
+        """
+        Custom Learning Rate Scheduler that periodically fits a linear regression to the recent reconstruction errors (losses).
+        If the standard deviation of the errors is greater than the slope by a certain factor, it divides the learning rate by 10.
+        """
+        def __init__(self, optimizer: optim.Adam, window_size=512, slope_factor=20.0, min_lr=1e-6):
+            super().__init__(optimizer)
+            self.window_size = window_size
+            self.slope_factor = slope_factor
+            self.min_lr = min_lr
+            self.losses = []
 
-    def step(self, loss: float = None):
-        if loss is None:
-            return
+        def step(self, loss: float = None):
+            if loss is None:
+                return
+            
+            self.losses.append(loss)
+            
+            # Update lr only if enough losses
+            if len(self.losses) >= self.window_size:
+                y = np.array(self.losses)
+                x = np.arange(len(y))
+
+                slope, _ = np.polyfit(x, y, deg=1)
+                std_dev = np.std(y)
+
+                # Update lr if std_dev is greater than loss' slop of a certain factor
+                if std_dev > abs(slope) * self.slope_factor:
+                    for param_group in self.optimizer.param_groups:
+                        new_lr = max(param_group['lr'] / 10.0, self.min_lr)
+                        param_group['lr'] = new_lr
+                        print(f'new_lr = {new_lr}')
+                    self.losses = []
+                else:
+                    self.losses.pop(0)
         
-        self.losses.append(loss)
-        
-        # Update lr only if enough losses
-        if len(self.losses) >= self.window_size:
-            y = np.array(self.losses)
-            x = np.arange(len(y))
-
-            slope, _ = np.polyfit(x, y, deg=1)
-            std_dev = np.std(y)
-
-            # Update lr if std_dev is greater than loss' slop of a certain factor
-            if std_dev > abs(slope) * self.slope_factor:
-                for param_group in self.optimizer.param_groups:
-                    new_lr = max(param_group['lr'] / 10.0, self.min_lr)
-                    param_group['lr'] = new_lr
-                    print(f'new_lr = {new_lr}')
-                self.losses = []
-            else:
-                self.losses.pop(0)
-    
-    def get_lr(self):
-        return [param_group['lr'] for param_group in self.optimizer.param_groups]
+        def get_lr(self):
+            return [param_group['lr'] for param_group in self.optimizer.param_groups]

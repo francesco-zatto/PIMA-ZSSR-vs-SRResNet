@@ -52,6 +52,13 @@ class ResNetPreprocessing(SRPreprocessingStrategy):
 
         if self.train:
             # use random crops
+            # Check if the image is too small for the crop
+            if hr_img.width < self.crop_size or hr_img.height < self.crop_size:
+                print(f"Skipping {self.img_paths[idx]} (Size: {hr_img.width}x{hr_img.height}) - too small for {self.crop_size}x{self.crop_size} crop.")
+                
+                # Pick a new random index and try again recursively
+                new_index = random.randint(0, len(self.img_paths) - 1)
+                return self.sample(new_index, scale_factor)
             i, j, h, w = transforms.RandomCrop.get_params(hr_tensor, (self.crop_size, self.crop_size))
             hr_target = transformsF.crop(hr_tensor, i, j, h, w)
 

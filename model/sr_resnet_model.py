@@ -47,7 +47,7 @@ class SRResNet(nn.Module):
     """
     SRResNet architecture based on the paper by Ledig et al. (2017).
     """
-    def __init__(self, num_channels: int = 64, num_blocks: int = 8, upscale_factor: int = 4):
+    def __init__(self, num_channels: int = 64, num_blocks: int = 16, upscale_factor: int = 4):
         super().__init__()
         self.num_channels = num_channels
         self.num_blocks = num_blocks
@@ -73,4 +73,5 @@ class SRResNet(nn.Module):
         x = self.secondary_conv(x)
         x = x + residual # Global skip connection
         x = self.upsample(x)
-        return self.final_conv(x)
+        x = self.final_conv(x)
+        return torch.tanh(x)

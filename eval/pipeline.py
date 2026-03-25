@@ -86,7 +86,19 @@ class SRPipeline:
                 dataset = Urban100Dataset(root_dir=str(temp_dir_path), scale_factor=self.scale_factor, strategy=strategy)
                 
                 # SRResNet is already trained globally, so just evaluate
-                results = self.runner.evaluate(dataset)
+                results, hr_pred = self.runner.evaluate(dataset)
+
+                # print scale of hr_pred
+                print(hr_pred.max())
+                print(hr_pred.min())
+
+                pred_tensor = hr_pred.squeeze(0).cpu().clamp(0, 1)
+                pred_pil = transformsF.to_pil_image(pred_tensor)
+                
+                save_filename = f"{lr_img_path.stem}_SRResNet_pred.png"
+                save_path = self.output_dir / save_filename
+                pred_pil.save(save_path)
+                print(f"Saved SRResNet prediction to: {save_path.name}")
 
         # Log Metrics
         psnr_val = results['psnr'].item()
