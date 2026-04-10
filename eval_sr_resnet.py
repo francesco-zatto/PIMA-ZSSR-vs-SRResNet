@@ -47,6 +47,23 @@ if __name__ == "__main__":
         action="store_true",
         help="Run full pipeline (save predicted images + CSV). Default: metrics only"
     )
+
+    parser.add_argument(
+        "--use-batch-norm", 
+        action='store_true',
+        help="Enable Batch Normalization in the network"
+    )
+    parser.add_argument(
+        "--scale-lr", 
+        action='store_true',
+        help="Scale LR images to [-1, 1] range"
+    )
+    parser.add_argument(
+        "--final-activation", 
+        action='store_true',
+        help="Enable Tanh final activation bounding output to [-1, 1]"
+    )
+    
     args = parser.parse_args()
     
     # Verify checkpoint exists
@@ -58,7 +75,10 @@ if __name__ == "__main__":
     print(f"Loading checkpoint from {checkpoint_path}...")
     
     # Initialize runner
-    runner = SRResNetRunner()
+    runner = SRResNetRunner(
+        use_batch_norm=args.use_batch_norm,
+        final_activation=args.final_activation
+    )
     
     # Set output directory
     output_dir = Path(args.output_dir)
@@ -94,7 +114,7 @@ if __name__ == "__main__":
         test_dataset = dataset_class(
             root_dir=str(data_dir), 
             scale_factor=args.scale_factor, 
-            strategy=ResNetPreprocessing(train=False)
+            strategy=ResNetPreprocessing(train=False, scale_LR=args.scale_lr)
         )
         
         results, _ = runner.evaluate(
@@ -119,8 +139,7 @@ if __name__ == "__main__":
                 output_dir=str(dataset_output),
                 scale_factor=float(args.scale_factor)
             )
-            pipeline.run()
-    
+            pipeline.run()    
     # Print summary
     print(f"\n{'='*50}")
     print("EVALUATION SUMMARY")
@@ -130,7 +149,7 @@ if __name__ == "__main__":
     print(f"{'='*50}")
     for dataset_name, results in results_summary.items():
         print(f"{dataset_name:12} -> PSNR: {results['psnr']:6.2f} dB, SSIM: {results['ssim']:.4f}")
-    print(f"{'='*50}")  
+    print(f"{'='*50}")
     
     if args.pipeline:
         print(f"\nPredictions saved to: {output_dir}")

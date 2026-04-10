@@ -8,16 +8,16 @@ sys.path.append(str(Path(__file__).parent))
 
 import matplotlib.pyplot as plt
 
-from data.datasets import Urban100Dataset, BSD100Dataset, COCODataset
+from data.datasets import COCODataset
 from data.preprocessing import ResNetPreprocessing
 
 from runner.runners import SRResNetRunner
 from eval.pipeline import SRPipeline
 
-from config import COCO_DIR, CHECKPOINT_DIR, SRRESNET_OUTPUT_DIR
+from config import COCO_DIR, CHECKPOINT_DIR
 
 BATCH_SIZE = 16
-TOTAL_ITERATIONS = 1e6
+TOTAL_ITERATIONS = 1e6/2
 
 if __name__ == "__main__":
     
@@ -35,6 +35,24 @@ if __name__ == "__main__":
         default=str(CHECKPOINT_DIR),
         help="Directory to save checkpoints (default: from config)"
     )
+    
+    # New Architectural Flags (Default is False unless specified in terminal)
+    parser.add_argument(
+        "--use-batch-norm", 
+        action='store_true',
+        help="Enable Batch Normalization in the network"
+    )
+    parser.add_argument(
+        "--scale-lr", 
+        action='store_true',
+        help="Scale LR images to [-1, 1] range"
+    )
+    parser.add_argument(
+        "--final-activation", 
+        action='store_true',
+        help="Enable Tanh final activation bounding output to [-1, 1]"
+    )
+    
     args = parser.parse_args()
     
     # TRAINING
@@ -42,15 +60,23 @@ if __name__ == "__main__":
     # Initialize training dataset
     train_image_dir = str(COCO_DIR)
     print(f"Preparing dataset from {train_image_dir}...")
+    
+    # Pass the scale_lr argument to the strategy
     train_dataset = COCODataset(
         root_dir=train_image_dir, 
         scale_factor=4, 
-        strategy=ResNetPreprocessing()
+        strategy=ResNetPreprocessing(train=True, scale_LR=args.scale_lr)
     )
     
     # instantiate the SRResNet pipeline
     print("Initializing SRResNet Runner...")
-    runner = SRResNetRunner()
+    
+    # Pass the architectural toggles to your runner 
+    # (Ensure your SRResNetRunner __init__ accepts these and passes them to the SRResNet model)
+    runner = SRResNetRunner(
+        use_batch_norm=args.use_batch_norm,
+        final_activation=args.final_activation
+    )
     
     # Determine checkpoint load path
     checkpoint_load_path = None
@@ -72,34 +98,3 @@ if __name__ == "__main__":
     )
     
     print("Training complete.")
-
-    # TESTING 
-
-    # pipeline = SRPipeline(
-    #     runner=runner,
-    #     dataset_zip_path="datasets/Urban100.zip",
-    #     datasets_dir="datasets",
-    #     output_dir="outputs/srresnet_urban100",
-    #     scale_factor=4.0)
-
-    # # Assuming you loaded weights into resnet_runner or zssr_runner via checkpoint 
-    # pipeline.run()
-    
-    # Initialize test dataset
-    #test_image_dir = "test_images"
-    #print(f"Preparing dataset from {test_image_dir}...")
-    #test_dataset = Urban100Dataset(
-    #    root_dir=test_image_dir, 
-    #    scale_factor=4, 
-    #    strategy=ResNetPreprocessing(train=False)
-    #)
-
-    #test_output = runner.evaluate(dataset=test_dataset)
-
-    # TODO: convert model output from [-1, 1] to [0, 1]
-    # TODO: visualize test output
-    # TODO: calculate PSNR and SSIM for training and testing output
-
-    #print("Testing complete.")
-
-

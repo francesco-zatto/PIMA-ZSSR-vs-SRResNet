@@ -37,9 +37,10 @@ class SRPreprocessingStrategy(ABC):
         pass
 
 class ResNetPreprocessing(SRPreprocessingStrategy):
-    def __init__(self, crop_size=96, train=True):
+    def __init__(self, crop_size=96, train=True, scale_LR=False):
         self.crop_size = crop_size
         self.train = train 
+        self.scale_LR = scale_LR
         self.img_paths = []
 
     def prepare(self, root_dir: str, ext: str):
@@ -72,6 +73,10 @@ class ResNetPreprocessing(SRPreprocessingStrategy):
         lr_size = (hr_target.shape[1] // int(scale_factor), hr_target.shape[2] // int(scale_factor))
         lr_target = transformsF.resize(hr_target, list(lr_size), interpolation=transforms.InterpolationMode.BICUBIC)
         
+        # Scale LR to [-1, 1] if required
+        if self.scale_LR:
+            lr_target = (lr_target * 2.0) - 1.0
+
         # Scale HR to [-1, 1] according to paper
         hr_target = (hr_target * 2.0) - 1.0
 

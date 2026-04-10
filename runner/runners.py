@@ -33,16 +33,18 @@ class AbstractRunner(ABC):
         pass
 
 class SRResNetRunner(AbstractRunner):
-    def __init__(self):
+    def __init__(self, use_batch_norm=False, final_activation=False):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.criterion = nn.L1Loss()
         self.learning_rate = 1e-4
-        self.model = None
+        self.model = SRResNet(
+            use_batch_norm=use_batch_norm, 
+            final_activation=final_activation
+        ).to(self.device)
         
         self.metrics = SRMetricSuite(self.device)
 
     def train(self, dataset, total_iterations, batch_size, checkpoint_save_path=None, checkpoint_load_path=None):
-        self.model = SRResNet().to(self.device)
         optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate, betas=(0.9, 0.999))
         current_iteration = 0
 
@@ -55,7 +57,7 @@ class SRResNetRunner(AbstractRunner):
             # If starting from scratch, apply weight initialization
             def init_weights(m):
                 if isinstance(m, nn.Conv2d):
-                    nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                    nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu', a=0.25)
             self.model.apply(init_weights)
             print(f"--- Starting training from scratch ---")
 
@@ -149,18 +151,21 @@ class SRResNetRunner(AbstractRunner):
 
     def _load_checkpoint(self, path):
         checkpoint = torch.load(path, map_location=self.device)
-        model = SRResNet().to(self.device)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer = optim.Adam(model.parameters(), lr=self.learning_rate, betas=(0.9, 0.999))
+        
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        
+        optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate, betas=(0.9, 0.999))
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         iteration = checkpoint['iteration']
-        return model, optimizer, iteration
+        
+        return self.model, optimizer, iteration
     
     def _standardize_output(self, hr_pred):
         """
         Convert model output from [-1, 1] to [0, 1] for metric calculation.
         """
-        return (hr_pred + 1.0) / 2.0
+        hr_pred = (hr_pred + 1.0) / 2.0
+        return torch.clamp(hr_pred, 0.0, 1.0)
 
 
     def evaluate(self, dataset, checkpoint_path=None):
@@ -197,39 +202,6 @@ class SRResNetRunner(AbstractRunner):
         
         print(f"Results -> PSNR: {results['psnr']:.2f} dB, SSIM: {results['ssim']:.4f}")
         return results, sr_01
-
-    # def predict(self, dataset):
-    #     dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
-        
-    #     # TODO: load model from checkpoint if available, else raise error if model is None
-    #     if self.model is None:
-    #         raise ValueError("Model has not been trained yet. Please train the model before evaluation.")
-        
-    #     self.model.eval()
-    #     self.metrics.reset() # Clear previous scores
-        
-    #     print("--- Evaluating Model ---")
-        
-    #     with torch.no_grad():
-    #         for lr_im, hr_im in dataloader:
-    #             lr_patch, hr_true = lr_im.to(self.device), hr_im.to(self.device)
-                
-    #             # forward pass
-    #             hr_pred = self.model(lr_patch)
-                
-    #             # Standardize both to [0, 1] before metric collection
-    #             # hr_pred is [-1, 1], hr_true is [-1, 1]
-    #             sr_01 = self._standardize_output(hr_pred)
-    #             hr_01 = self._standardize_output(hr_true)
-                
-    #             # update metrics
-    #             self.metrics.update(sr_01, hr_01)
-        
-    #     # Calculate the final average scores
-    #     results = self.metrics.compute()
-        
-    #     print(f"Results -> PSNR: {results['psnr']:.2f} dB, SSIM: {results['ssim']:.4f}")
-    #     return results
 
 
 class ZSSRRunner(AbstractRunner):
