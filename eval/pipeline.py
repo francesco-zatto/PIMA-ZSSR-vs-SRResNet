@@ -38,66 +38,20 @@ class SRPipeline:
         """Prepares a single image environment and delegates to the Runner's evaluate method."""
         print(f"\n--- Evaluating: {lr_img_path.name} ---")
         
-        is_zssr = "ZSSR" in self.runner.__class__.__name__
+        runner_name = self.runner.__class__.__name__
+        is_zssr = "ZSSR" in runner_name
+        is_hybrid = "Hybrid" in runner_name
         
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_dir_path = Path(temp_dir)
             
-            if is_zssr:
-                # ZSSR needs the LR image for its internal dynamic dataset
-                target_img_path = temp_dir_path / lr_img_path.name
-                shutil.copy(lr_img_path, target_img_path)
-                
-                strategy = ZSSRPreprocessing(num_patches=64) 
-                dataset = Urban100Dataset(root_dir=str(temp_dir_path), scale_factor=self.scale_factor, strategy=strategy)
-                
-                _, h, w = strategy.base_img.shape
-                out_size = (int(h * self.scale_factor), int(w * self.scale_factor))
-                
-                # ZSSR MUST train on the specific image every time before predicting
-                print(f"Training ZSSR locally on {lr_img_path.name}...")
-                self.runner.train(dataset, out_size=out_size, **kwargs)
-                    
-                # Load Ground Truth Tensor for ZSSR's evaluation signature
-                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                hr_img = Image.open(hr_img_path).convert('RGB')
-                hr_true = transformsF.to_tensor(hr_img).to(device).unsqueeze(0)
-                
-                # Align spatial dimensions (Dataset rounding fallback)
-                min_h = min(self.runner.out_size[0], hr_true.shape[-2])
-                min_w = min(self.runner.out_size[1], hr_true.shape[-1])
-                hr_true = hr_true[..., :min_h, :min_w]
-                
-                # Call evaluate (ZSSR style)
-                results, hr_pred = self.runner.evaluate(hr_true=hr_true, save_hr=True)
-
-                pred_tensor = hr_pred.squeeze(0).cpu().clamp(0, 1)
-                pred_pil = transformsF.to_pil_image(pred_tensor)
-                
-                save_filename = f"{lr_img_path.stem}_ZSSR_pred.png"
-                save_path = self.output_dir / save_filename
-                pred_pil.save(save_path)
-                print(f"Saved ZSSR prediction to: {save_path.name}")
-                
+            # Delegate to the specific processing pipelines
+            if is_hybrid:
+                results = self._process_hybrid(temp_dir_path, lr_img_path, hr_img_path, **kwargs)
+            elif is_zssr:
+                results = self._process_zssr(temp_dir_path, lr_img_path, hr_img_path, **kwargs)
             else:
-                # ResNet preprocessing generates the LR internally from the HR image, so we pass HR
-                target_img_path = temp_dir_path / hr_img_path.name
-                shutil.copy(hr_img_path, target_img_path)
-                
-                strategy = ResNetPreprocessing(train=False)
-                dataset = Urban100Dataset(root_dir=str(temp_dir_path), scale_factor=self.scale_factor, strategy=strategy)
-                
-                # SRResNet is already trained globally, so just evaluate
-                results, hr_pred = self.runner.evaluate(dataset)
-
-                pred_tensor = hr_pred.squeeze(0).cpu().clamp(0, 1)
-                pred_pil = transformsF.to_pil_image(pred_tensor)
-                
-                save_filename = f"{lr_img_path.stem}_SRResNet_pred.png"
-                save_path = self.output_dir / save_filename
-                pred_pil.save(save_path)
-                print(f"Saved SRResNet prediction to: {save_path.name}")
-
+                results = self._process_resnet(temp_dir_path, hr_img_path)
 
         # Log Metrics
         psnr_val = results['psnr'].item()
@@ -205,6 +159,40 @@ class SRPipeline:
         save_path = self.output_dir / save_filename
         pred_pil.save(save_path)
         print(f"Saved ZSSR prediction to: {save_path.name}")
+        
+        return results
+
+    def _process_hybrid(self, temp_dir_path: Path, lr_img_path: Path, hr_img_path: Path, **kwargs) -> dict:
+        """Handles the specific zero-shot training and evaluation loop for the Hybrid model."""
+        target_img_path = temp_dir_path / lr_img_path.name
+        shutil.copy(lr_img_path, target_img_path)
+        
+        strategy = ZSSRPreprocessing(num_patches=64) 
+        dataset = Urban100Dataset(root_dir=str(temp_dir_path), scale_factor=self.scale_factor, strategy=strategy)
+            
+        _, h, w = strategy.base_img.shape
+        out_size = (int(h * self.scale_factor), int(w * self.scale_factor))
+        
+        print(f"Training Hybrid locally on {lr_img_path.name}...")
+        self.runner.train(dataset, out_size=out_size, **kwargs)
+            
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        hr_img = Image.open(hr_img_path).convert('RGB')
+        hr_true = transformsF.to_tensor(hr_img).to(device).unsqueeze(0)
+        
+        min_h = min(self.runner.out_size[0], hr_true.shape[-2])
+        min_w = min(self.runner.out_size[1], hr_true.shape[-1])
+        hr_true = hr_true[..., :min_h, :min_w]
+        
+        results, hr_pred = self.runner.evaluate(hr_true=hr_true, save_hr=True)
+        
+        pred_tensor = hr_pred.squeeze(0).cpu().clamp(0, 1)
+        pred_pil = transformsF.to_pil_image(pred_tensor)
+        
+        save_filename = f"{lr_img_path.stem}_Hybrid_pred.png"
+        save_path = self.output_dir / save_filename
+        pred_pil.save(save_path)
+        print(f"Saved Hybrid prediction to: {save_path.name}")
         
         return results
 

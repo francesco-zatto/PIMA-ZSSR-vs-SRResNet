@@ -425,3 +425,102 @@ class ZSSRRunner(AbstractRunner):
         
         def get_lr(self):
             return [param_group['lr'] for param_group in self.optimizer.param_groups]
+
+
+class HybridRunner(AbstractRunner):
+    def __init__(self, model, learning_rate=1e-3, distillation_weight=0.5):
+        """
+        Args:
+            model: An instance of HybridSRNet
+            learning_rate: LR for test-time training
+            distillation_weight: Weight for the teacher-student distillation loss (if used)
+        """
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = model.to(self.device)
+        self.criterion = nn.L1Loss()
+        self.learning_rate = learning_rate
+        self.distillation_weight = distillation_weight
+        
+        self.metrics = SRMetricSuite(self.device)
+        self.test_img = None
+        self.out_size = None
+
+    def train(self, dataset: AbstractSRDataset, out_size: torch.Size, n_epochs=50, **kwargs) -> None:
+        """
+        Executes test-time training on patches of a single image.
+        """
+        self.model.train()
+
+        self.test_img = dataset.strategy.base_img.unsqueeze(0).to(self.device)
+        self.out_size = out_size
+
+        # This prevents the optimizer from trying to update the frozen SRResNet
+        trainable_params = filter(lambda p: p.requires_grad, self.model.parameters())
+        optimizer = optim.Adam(trainable_params, lr=self.learning_rate)
+
+        dataloader = DataLoader(dataset, batch_size=32, shuffle=True, collate_fn=zssr_collate_fn)
+
+        print(f"--- Starting Hybrid Test-Time Training for {n_epochs} epochs ---")
+
+        for epoch in range(n_epochs):
+            epoch_loss = 0.0
+
+            for i, (lr_patch, hr_patch) in enumerate(dataloader):
+                lr_patch, hr_true = lr_patch.to(self.device), hr_patch.to(self.device)
+                
+                optimizer.zero_grad()
+                
+                # Forward pass depends on integration mode
+                if self.model.integration_mode == 'distillation':
+                    zssr_out, srresnet_out = self.model(lr_patch)
+                    
+                    # Loss = Ground Truth L1 + Distillation L1 (Teacher-Student)
+                    loss_gt = self.criterion(zssr_out, hr_true)
+                    loss_distill = self.criterion(zssr_out, srresnet_out.detach())
+                    loss = loss_gt + (self.distillation_weight * loss_distill)
+                    
+                elif self.model.integration_mode == 'fusion_head':
+                    final_pred = self.model(lr_patch)
+                    loss = self.criterion(final_pred, hr_true)
+                    
+                else:
+                    raise ValueError("Unknown integration mode")
+
+                loss.backward()
+                optimizer.step()
+                
+                epoch_loss += loss.item()
+                
+            print(f"Epoch {epoch}/{n_epochs} - Loss: {epoch_loss / len(dataloader):.6f}")
+
+
+    def evaluate(self, hr_true: torch.Tensor, save_hr: bool = True) -> dict:
+        """
+        Predict the final HR image and calculate metrics.
+        """
+        self.model.eval()
+        self.metrics.reset()
+        
+        print("--- Evaluating Hybrid Model ---")
+        
+        with torch.no_grad():
+            lr_img = self.test_img
+            
+            # Forward pass
+            if self.model.integration_mode == 'distillation':
+                hr_pred, _ = self.model(lr_img)
+            elif self.model.integration_mode == 'fusion_head':
+                hr_pred = self.model(lr_img)
+
+            # Clamp predictions to [0, 1] for metric calculation
+            hr_pred = torch.clamp(hr_pred, 0.0, 1.0)
+            hr_true_clamped = torch.clamp(hr_true, 0.0, 1.0)
+            
+            self.metrics.update(hr_pred, hr_true_clamped)
+        
+        results = self.metrics.compute()
+        print(f"Results -> PSNR: {results['psnr']:.2f} dB, SSIM: {results['ssim']:.4f}")
+        
+        if save_hr:
+            return results, hr_pred
+        return results
