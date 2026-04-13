@@ -25,7 +25,6 @@ class AbstractSRDataset(Dataset, ABC):
         """
         new_pairs = self.strategy.update([image])
 
-
 class Urban100Dataset(AbstractSRDataset):
     # TODO their root_dir should be a constant for ResNet and a given dir for ZSSR depending on the test image
     def __init__(self, root_dir: str, scale_factor: float, strategy: SRPreprocessingStrategy):

@@ -1,4 +1,4 @@
-import os
+import torch.nn as nn
 import csv
 import shutil
 import tempfile
@@ -10,7 +10,9 @@ import torchvision.transforms.functional as transformsF
 
 from data.datasets import Urban100Dataset
 from data.preprocessing import ZSSRPreprocessing, ResNetPreprocessing
+from data.utils import estimate_michaeli_irani_kernel
 from runner.runners import AbstractRunner
+import config
 
 class SRPipeline:
     def __init__(self, runner: AbstractRunner, dataset_zip_path: str, datasets_dir: str, output_dir: str, scale_factor: float = 4.0):
@@ -32,7 +34,7 @@ class SRPipeline:
         
         return extract_path
 
-    def process_image(self, lr_img_path: Path, hr_img_path: Path, csv_writer, **kwargs):
+    def process_image(self, lr_img_path: Path, hr_img_path: Path, csv_writer, temp_dir_path: Path, **kwargs):
         """Prepares a single image environment and delegates to the Runner's evaluate method."""
         print(f"\n--- Evaluating: {lr_img_path.name} ---")
         
@@ -126,26 +128,96 @@ class SRPipeline:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         csv_path = self.output_dir / f"{self.runner.__class__.__name__.lower()}_evaluation_results.csv"
         
-        # Iterate, Evaluate, and Record
-        with open(csv_path, mode='w', newline='') as csv_file:
-            csv_writer = csv.writer(csv_file)
-            csv_writer.writerow(["Image_Name", "PSNR", "SSIM"])
+        with tempfile.TemporaryDirectory() as shared_temp_dir:
+            shared_temp_path = Path(shared_temp_dir)
             
-            for lr_path in lr_image_paths:
-                # Attempt to pair LR with Ground Truth HR
-                hr_name = lr_path.name.replace('LR', 'HR').replace('x4', '')
-                hr_path_candidates = list(extracted_dir.rglob(hr_name))
+            with open(csv_path, mode='w', newline='') as csv_file:
+                csv_writer = csv.writer(csv_file)
+                csv_writer.writerow(["Image_Name", "PSNR", "SSIM"])
                 
-                if not hr_path_candidates and lr_path.parent.name == "LR":
-                    possible_hr = lr_path.parent.parent / "HR" / lr_path.name
-                    if possible_hr.exists():
-                        hr_path_candidates.append(possible_hr)
-                        
-                if not hr_path_candidates:
-                    print(f"Warning: Could not find HR ground truth for {lr_path.name}. Skipping.")
-                    continue
+                for lr_path in lr_image_paths:
+                    # Attempt to pair LR with Ground Truth HR
+                    hr_path_candidates = []
+                    if lr_path.parent.name == "LR":
+                        possible_hr = lr_path.parent.parent / "HR" / lr_path.name
+                        if possible_hr.exists():
+                            hr_path_candidates.append(possible_hr)
                     
-                hr_path = hr_path_candidates[0]
-                self.process_image(lr_path, hr_path, csv_writer, **kwargs)
-                
-        print(f"\nPipeline evaluation completed successfully! Results saved to {csv_path}")
+                    if not hr_path_candidates:
+                        hr_name = lr_path.name.replace('LR', 'HR').replace('x4', '')
+                        hr_path_candidates = list(extracted_dir.rglob(hr_name))
+                            
+                    if not hr_path_candidates:
+                        print(f"Warning: Could not find HR ground truth for {lr_path.name}. Skipping.")
+                        continue
+                        
+                    # Clean the shared folder before processing the next image
+                    for item in shared_temp_path.iterdir():
+                        if item.is_dir():
+                            shutil.rmtree(item)
+                        else:
+                            item.unlink()
+
+                    hr_path = hr_path_candidates[0]
+                    self.process_image(lr_path, hr_path, csv_writer, shared_temp_path, **kwargs)
+                    
+            print(f"\nPipeline evaluation completed successfully! Results saved to {csv_path}")
+
+    def _process_zssr(self, temp_dir_path: Path, lr_img_path: Path, hr_img_path: Path, **kwargs) -> dict:
+        """Handles the specific zero-shot training and evaluation loop for ZSSR."""
+        # ZSSR needs the LR image for its internal dynamic dataset
+        target_img_path = temp_dir_path / lr_img_path.name
+        shutil.copy(lr_img_path, target_img_path)
+        
+        strategy = ZSSRPreprocessing(num_patches=64) 
+        dataset = Urban100Dataset(root_dir=str(temp_dir_path), scale_factor=self.scale_factor, strategy=strategy)
+        if self.runner.model.upsample_mode == 'learnt':
+            print("Estimating ZSSR kernel using Michaeli-Irani method...")
+            lr_tensor = strategy.base_img.unsqueeze(0).to(self.runner.device)
+            estimated_kernel = estimate_michaeli_irani_kernel(lr_tensor, scale_factor=self.scale_factor)
+            strategy.set_kernel(estimated_kernel.cpu())
+            
+        _, h, w = strategy.base_img.shape
+        out_size = (int(h * self.scale_factor), int(w * self.scale_factor))
+        
+        # ZSSR MUST train on the specific image every time before predicting
+        print(f"Training ZSSR locally on {lr_img_path.name}...")
+        self.runner.train(dataset, out_size=out_size, **kwargs)
+            
+        # Load Ground Truth Tensor for ZSSR's evaluation signature
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        hr_img = Image.open(hr_img_path).convert('RGB')
+        hr_true = transformsF.to_tensor(hr_img).to(device).unsqueeze(0)
+        
+        # Align spatial dimensions (Dataset rounding fallback)
+        min_h = min(self.runner.out_size[0], hr_true.shape[-2])
+        min_w = min(self.runner.out_size[1], hr_true.shape[-1])
+        hr_true = hr_true[..., :min_h, :min_w]
+        
+        # Call evaluate (ZSSR style)
+        results, hr_pred = self.runner.evaluate(hr_true=hr_true, save_hr=True)
+        
+        # Save the ZSSR Prediction
+        pred_tensor = hr_pred.squeeze(0).cpu().clamp(0, 1)
+        pred_pil = transformsF.to_pil_image(pred_tensor)
+        
+        save_filename = f"{lr_img_path.stem}_ZSSR_pred.png"
+        save_path = self.output_dir / save_filename
+        pred_pil.save(save_path)
+        print(f"Saved ZSSR prediction to: {save_path.name}")
+        
+        return results
+
+    def _process_resnet(self, temp_dir_path: Path, hr_img_path: Path) -> dict:
+        """Handles standard evaluation for pre-trained models like ResNet."""
+        # ResNet preprocessing generates the LR internally from the HR image, so we pass HR
+        target_img_path = temp_dir_path / hr_img_path.name
+        shutil.copy(hr_img_path, target_img_path)
+        
+        strategy = ResNetPreprocessing(train=False)
+        dataset = Urban100Dataset(root_dir=str(temp_dir_path), scale_factor=self.scale_factor, strategy=strategy)
+        
+        # SRResNet is already trained globally, so just evaluate
+        results = self.runner.evaluate(dataset)
+        
+        return results
