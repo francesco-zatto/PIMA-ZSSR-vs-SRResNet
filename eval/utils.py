@@ -4,134 +4,135 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from IPython.display import display
 
-import config
-
 def generate_comparison_plots(folder_paths, output_dir="outputs/plots"):
     """
-    Reads CSVs and generates comparative plots for normal vs variant models of zssr  
+    Reads CSVs and generates comparative plots for any number of ZSSR model variants.
+    
+    Expected input format:
+    folder_paths = {
+        'Dataset1': {'ModelA': 'path/to/A', 'ModelB': 'path/to/B', 'ModelC': 'path/to/C'},
+        'Dataset2': {'ModelA': 'path/to/A', 'ModelB': 'path/to/B', 'ModelC': 'path/to/C'}
+    }
     """
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     
-    datasets = []
+    if not folder_paths:
+        print("No data provided.")
+        return
+
+    datasets = list(folder_paths.keys())
+    # Dynamically extract all model names from the first dataset
+    models = list(folder_paths[datasets[0]].keys())
+    num_models = len(models)
     
-    # Data containers for Bar Plots
-    psnr_means_norm, psnr_means_var = [], []
-    ssim_means_norm, ssim_means_var = [], []
-    
-    # Data containers for Box Plots 
-    psnr_data_norm, psnr_data_var = [], []
-    ssim_data_norm, ssim_data_var = [], []
-    
-    # Data containers for Scatter Plots 
-    scatter_psnr = {}
-    scatter_ssim = {}
+    # Dynamic Data Containers
+    metrics = {'PSNR': {}, 'SSIM': {}}
+    for metric in metrics:
+        metrics[metric]['means'] = {m: [] for m in models}
+        metrics[metric]['data'] = {m: [] for m in models}
     
     # Load and Prepare Data
     for dataset_name, dirs in folder_paths.items():
-        try:
-            normal_dir = Path(dirs['zssr'])
-            variant_dir = Path(dirs['sigmoid'])
-            
-            normal_csv = list(normal_dir.glob("*.csv"))[0]
-            variant_csv = list(variant_dir.glob("*.csv"))[0]
-            
-            df_norm = pd.read_csv(normal_csv)
-            df_var = pd.read_csv(variant_csv)
-            
-            # Ensure numeric data
-            df_norm['PSNR'] = pd.to_numeric(df_norm['PSNR'], errors='coerce')
-            df_norm['SSIM'] = pd.to_numeric(df_norm['SSIM'], errors='coerce')
-            df_var['PSNR'] = pd.to_numeric(df_var['PSNR'], errors='coerce')
-            df_var['SSIM'] = pd.to_numeric(df_var['SSIM'], errors='coerce')
-            
-            datasets.append(dataset_name)
-            
-            # Store Means
-            psnr_means_norm.append(df_norm['PSNR'].mean())
-            psnr_means_var.append(df_var['PSNR'].mean())
-            ssim_means_norm.append(df_norm['SSIM'].mean())
-            ssim_means_var.append(df_var['SSIM'].mean())
-            
-            # Store Raw Data for boxplots (dropping NaNs)
-            psnr_data_norm.append(df_norm['PSNR'].dropna().values)
-            psnr_data_var.append(df_var['PSNR'].dropna().values)
-            ssim_data_norm.append(df_norm['SSIM'].dropna().values)
-            ssim_data_var.append(df_var['SSIM'].dropna().values)
-            
-            # Merge for 1-to-1 scatter plot
-            merged = pd.merge(df_norm, df_var, on='Image_Name', suffixes=('_norm', '_var'))
-            scatter_psnr[dataset_name] = (merged['PSNR_norm'], merged['PSNR_var'])
-            scatter_ssim[dataset_name] = (merged['SSIM_norm'], merged['SSIM_var'])
-            
-        except Exception as e:
-            print(f"Skipping {dataset_name} due to error: {e}")
+        for model_name in models:
+            try:
+                model_dir = Path(dirs[model_name])
+                csv_file = list(model_dir.glob("*.csv"))[0]
+                df = pd.read_csv(csv_file)
+                
+                # Ensure numeric data
+                df['PSNR'] = pd.to_numeric(df['PSNR'], errors='coerce')
+                df['SSIM'] = pd.to_numeric(df['SSIM'], errors='coerce')
+                
+                # Store Means
+                metrics['PSNR']['means'][model_name].append(df['PSNR'].mean())
+                metrics['SSIM']['means'][model_name].append(df['SSIM'].mean())
+                
+                # Store Raw Data for boxplots (dropping NaNs)
+                metrics['PSNR']['data'][model_name].append(df['PSNR'].dropna().values)
+                metrics['SSIM']['data'][model_name].append(df['SSIM'].dropna().values)
+                
+            except Exception as e:
+                print(f"Skipping {dataset_name} - {model_name} due to error: {e}")
+                # Append NaNs/Empty arrays to maintain shape if a file is missing
+                metrics['PSNR']['means'][model_name].append(np.nan)
+                metrics['SSIM']['means'][model_name].append(np.nan)
+                metrics['PSNR']['data'][model_name].append([])
+                metrics['SSIM']['data'][model_name].append([])
 
-    if not datasets:
-        print("No data found to plot.")
-        return
+    # Set up colors (using a matplotlib colormap to support N models dynamically)
+    cmap = plt.get_cmap('tab10')
+    colors = [cmap(i) for i in range(num_models)]
 
-    # Bar Plots (Averages)
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    # ==========================================
+    # 1. Bar Plots (Averages)
+    # ==========================================
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     x = np.arange(len(datasets))  
-    width = 0.35                  
+    total_group_width = 0.8
+    bar_width = total_group_width / num_models
 
-    # PSNR Bar Plot
-    axes[0].bar(x - width/2, psnr_means_norm, width, label='ZSSR (Normal)', color='steelblue')
-    axes[0].bar(x + width/2, psnr_means_var, width, label='ZSSR (Sigmoid)', color='darkorange')
-    axes[0].set_ylabel('Average PSNR')
-    axes[0].set_title('Average PSNR Comparison')
-    axes[0].set_xticks(x)
-    axes[0].set_xticklabels(datasets)
-    axes[0].legend()
-    axes[0].grid(axis='y', linestyle='--', alpha=0.7)
+    for i, model_name in enumerate(models):
+        # Calculate offset so bars center nicely over the dataset tick
+        offset = (i - num_models / 2 + 0.5) * bar_width
+        
+        axes[0].bar(x + offset, metrics['PSNR']['means'][model_name], 
+                    bar_width, label=model_name, color=colors[i])
+        axes[1].bar(x + offset, metrics['SSIM']['means'][model_name], 
+                    bar_width, label=model_name, color=colors[i])
 
-    # SSIM Bar Plot
-    axes[1].bar(x - width/2, ssim_means_norm, width, label='ZSSR (Normal)', color='steelblue')
-    axes[1].bar(x + width/2, ssim_means_var, width, label='ZSSR (Sigmoid)', color='darkorange')
-    axes[1].set_ylabel('Average SSIM')
-    axes[1].set_title('Average SSIM Comparison')
-    axes[1].set_xticks(x)
-    axes[1].set_xticklabels(datasets)
-    axes[1].legend()
-    axes[1].grid(axis='y', linestyle='--', alpha=0.7)
+    for i, title in enumerate(['PSNR', 'SSIM']):
+        axes[i].set_ylabel(f'Average {title}')
+        axes[i].set_title(f'Average {title} Comparison')
+        axes[i].set_xticks(x)
+        axes[i].set_xticklabels(datasets)
+        axes[i].legend()
+        axes[i].grid(axis='y', linestyle='--', alpha=0.7)
 
     plt.tight_layout()
-    bar_path = Path(output_dir) / "comparison_barplot.png"
-    plt.savefig(bar_path, dpi=300)
+    plt.savefig(Path(output_dir) / "comparison_barplot.png", dpi=300)
     plt.show()
     plt.close()
 
-    # Box Plots (Distributions)
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    # ==========================================
+    # 2. Box Plots (Distributions)
+    # ==========================================
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     
-    # Calculate offset positions for grouped boxplots
-    pos_norm = np.array(range(1, len(datasets) * 3, 3))
-    pos_var = pos_norm + 1
+    # Calculate group spacing: num_models + 1 (for visual gap between datasets)
+    group_width = num_models + 1
+    base_positions = np.arange(len(datasets)) * group_width
 
-    box_colors = ['lightblue', 'lightsalmon']
+    for i, model_name in enumerate(models):
+        # Shift each model's boxplot by 'i' within its group
+        pos = base_positions + i + 1 
+        
+        bplot_psnr = axes[0].boxplot(metrics['PSNR']['data'][model_name], positions=pos, 
+                                     widths=0.6, patch_artist=True)
+        bplot_ssim = axes[1].boxplot(metrics['SSIM']['data'][model_name], positions=pos, 
+                                     widths=0.6, patch_artist=True)
+        
+        # Color the boxes
+        for patch in bplot_psnr['boxes']: patch.set_facecolor(colors[i])
+        for patch in bplot_ssim['boxes']: patch.set_facecolor(colors[i])
 
-    # PSNR Box Plot
-    bplot1_norm = axes[0].boxplot(psnr_data_norm, positions=pos_norm, widths=0.6, patch_artist=True)
-    bplot1_var = axes[0].boxplot(psnr_data_var, positions=pos_var, widths=0.6, patch_artist=True)
-    
-    for patch in bplot1_norm['boxes']: patch.set_facecolor(box_colors[0])
-    for patch in bplot1_var['boxes']: patch.set_facecolor(box_colors[1])
-    
-    axes[0].set_title('PSNR Distribution')
-    axes[0].set_xticks(pos_norm + 0.5)
-    axes[0].set_xticklabels(datasets)
-    axes[0].legend([bplot1_norm["boxes"][0], bplot1_var["boxes"][0]], ['ZSSR (Normal)', 'ZSSR (Sigmoid)'])
-    axes[0].grid(axis='y', linestyle='--', alpha=0.7)
+    # Formatting Boxplots
+    center_offset = (num_models + 1) / 2
+    tick_positions = base_positions + center_offset
 
-    # SSIM Box Plot
-    bplot2_norm = axes[1].boxplot(ssim_data_norm, positions=pos_norm, widths=0.6, patch_artist=True)
-    bplot2_var = axes[1].boxplot(ssim_data_var, positions=pos_var, widths=0.6, patch_artist=True)
+    for i, title in enumerate(['PSNR', 'SSIM']):
+        axes[i].set_title(f'{title} Distribution')
+        axes[i].set_xticks(tick_positions)
+        axes[i].set_xticklabels(datasets)
+        axes[i].grid(axis='y', linestyle='--', alpha=0.7)
+        
+        # Custom legend for Boxplots
+        handles = [plt.Rectangle((0,0),1,1, color=colors[idx]) for idx in range(num_models)]
+        axes[i].legend(handles, models)
 
     plt.tight_layout()
-    bar_path = Path(output_dir) / "comparison_boxplot.png"
-    plt.savefig(bar_path, dpi=300)
+    plt.savefig(Path(output_dir) / "comparison_boxplot.png", dpi=300)
+    plt.show()
     plt.close()
-
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 4))
 plt.close(fig) 
 

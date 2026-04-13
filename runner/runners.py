@@ -170,12 +170,12 @@ class SRResNetRunner(AbstractRunner):
 
 
 class ZSSRRunner(AbstractRunner):
-    def __init__(self):
+    def __init__(self, model: ZSSRConvNet):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.criterion = nn.L1Loss()
         self.learning_rate = 1e-3
         self.test_img: torch.Tensor = None
-        self.model: ZSSRConvNet = None
+        self.model = model.to(self.device)
         self.out_size: torch.Size = None
 
         self.history = {
@@ -188,17 +188,24 @@ class ZSSRRunner(AbstractRunner):
         }
         self.metrics = SRMetricSuite(self.device)
 
+    def _reset_all_weights(model):
+        if hasattr(model, '_init_weights'):
+            model._init_weights()
+        elif hasattr(model, 'reset_parameters'):
+            model.reset_parameters()
+
     def train(self, dataset: AbstractSRDataset, out_size: torch.Size, n_epochs=50, n_scale_factors=6) -> None:
         """
         Trains the model on the internal patches of the test image.
         """
+        self.model = self.model.to(self.device)
+        self.model.apply(ZSSRRunner._reset_all_weights)
 
         # Keep test image for intermediate HR fathers and final super-resolution
         self.test_img = dataset.strategy.base_img.unsqueeze(0).to(self.device)
         self.out_size = out_size
 
-        dataloader = DataLoader(dataset, batch_size=32, shuffle=True, collate_fn=zssr_collate_fn)
-        self.model = ZSSRConvNet().to(self.device) 
+        dataloader = DataLoader(dataset, batch_size=32, shuffle=True, collate_fn=zssr_collate_fn) 
         optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
         scheduler = LinearFitLossLR(optimizer)
 
@@ -232,7 +239,8 @@ class ZSSRRunner(AbstractRunner):
                     optimizer.step()
                     scheduler.step(loss.item())
 
-                    self._capture_layer_stats(self.model.final_conv)
+                    if self.model.sigmoid_mode != 'none':
+                        self._capture_layer_stats(self.model.final_conv)
 
                     epoch_grad += self._compute_grad_mag(self.model)
                     epoch_loss += loss.item()

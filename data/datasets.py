@@ -17,20 +17,13 @@ class AbstractSRDataset(Dataset, ABC):
         return len(self.strategy)
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
-        return self._check(self.strategy.sample(idx, self.curr_s_i))
+        return self.strategy.sample(idx, self.curr_s_i)
 
     def add_image(self, image: torch.Tensor) -> None:
         """
         Add to the dataset the new image, using the preprocessing strategy.
         """
         new_pairs = self.strategy.update([image])
-    
-    def _check(self, item: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Apply final check to LR and HR images, i.e. clamping them between 0.0 and 1.0.
-        """
-        lr_img, hr_img = item
-        return torch.clamp(lr_img, 0.0, 1.0), torch.clamp(hr_img, 0.0, 1.0)
     
 
 class Urban100Dataset(AbstractSRDataset):
