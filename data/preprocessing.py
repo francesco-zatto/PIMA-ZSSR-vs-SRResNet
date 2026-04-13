@@ -5,6 +5,7 @@ import glob
 import os
 import torchvision.transforms as transforms
 import torchvision.transforms.functional as transformsF
+import torch.nn.functional as F
 from abc import ABC, abstractmethod
 from PIL import Image
 
@@ -102,6 +103,18 @@ class ZSSRPreprocessing(SRPreprocessingStrategy):
         self.father_weights: list[float] = []
         self.base_img: torch.Tensor = None 
 
+        self.custom_kernel: torch.Tensor = None 
+
+    def set_kernel(self, kernel: torch.Tensor) -> None:
+        """
+        Stores the estimated kernel. Expands it to 3 channels so it applies 
+        identically to R, G, and B independently.
+        """
+        if kernel.shape[0] == 1:
+            kernel = kernel.repeat(3, 1, 1, 1)
+
+        self.custom_kernel = kernel.to('cpu').detach()
+
     def prepare(self, root_dir: str, ext: str):
         """
         Create initial dataset from test_img.
@@ -146,26 +159,85 @@ class ZSSRPreprocessing(SRPreprocessingStrategy):
         
     def sample(self, idx: int, scale_factor: float) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Sample a HR father according to the probability distribution derived by ratios with original LR size.
-        From HR, take a patch and create a LR to use as input for the model.
+        Sample a HR father, extract a crop, simulate camera blur, and downsample correctly.
         """
         hr_father = random.choices(self.pool_fathers, weights=self.father_weights, k=1)[0]
+        
+        # Take a crop from the HR image
         hr_crop = self._crop(hr_father)
         
-        lr_size = (int(hr_crop.shape[1] / scale_factor), int(hr_crop.shape[2] / scale_factor))
-        lr_crop = transformsF.resize(hr_crop, lr_size, interpolation=transforms.InterpolationMode.BICUBIC)
-        
-        return lr_crop, hr_crop
+        if self.custom_kernel is not None:
+            hr_batched = hr_crop.unsqueeze(0)
+            k_size = self.custom_kernel.shape[-1]
+            pad = k_size // 2
+            
+            with torch.no_grad():
+                # Reflect padding prevents the dark zero-padding borders
+                padded_hr = F.pad(hr_batched, (pad, pad, pad, pad), mode='reflect')
+                
+                # Apply convolution with the custom kernel to simulate camera blur
+                blurred_hr = F.conv2d(
+                    padded_hr, 
+                    self.custom_kernel, 
+                    padding=0, 
+                    groups=3
+                )
+                
+            hr_to_downscale = blurred_hr.squeeze(0)
+            
+            # Clamp out-of-bounds values caused by negative kernel weights
+            hr_to_downscale = torch.clamp(hr_to_downscale, 0.0, 1.0)
+        else:
+            hr_to_downscale = hr_crop
 
-    def _crop(self, hr_image: torch.Tensor) -> torch.Tensor:
+        # Correct mathematical downsampling (Decimation)
+        if int(scale_factor) == scale_factor:
+            s = int(scale_factor)
+            lr_crop = hr_to_downscale[:, ::s, ::s]
+        else:
+            # If fractional
+            lr_size = (int(hr_crop.shape[1] / scale_factor), int(hr_crop.shape[2] / scale_factor))
+            lr_crop = transformsF.resize(
+                hr_to_downscale, 
+                lr_size, 
+                interpolation=transforms.InterpolationMode.NEAREST,
+                antialias=False
+            )        
+            
+        return torch.clamp(lr_crop, 0.0, 1.0), torch.clamp(hr_crop, 0.0, 1.0)
+
+    def _crop(self, hr_image: torch.Tensor, min_variance: float = 0.005, max_tries: int = 10) -> torch.Tensor:
         """
-        Take a random crop of HR image if HR is large enough.
+        Take a random crop of HR image if HR is large enough, 
+        ensuring the crop has enough variance to contain meaningful texture.
         """
         _, h, w = hr_image.shape
+        
+        # Fallback if the image is smaller than the crop size
         if h < self.crop_size or w < self.crop_size:
             return hr_image
-        i, j, th, tw = transforms.RandomCrop.get_params(hr_image, (self.crop_size, self.crop_size))
-        return transformsF.crop(hr_image, i, j, th, tw)
+
+        best_crop = None
+        highest_variance = -1.0
+
+        for _ in range(max_tries):
+            # Sample a random crop
+            i, j, th, tw = transforms.RandomCrop.get_params(hr_image, (self.crop_size, self.crop_size))
+            crop = transformsF.crop(hr_image, i, j, th, tw)
+            
+            # Calculate the variance of the crop
+            crop_variance = torch.var(crop).item()
+
+            # If it meets the threshold, return immediately
+            if crop_variance >= min_variance:
+                return crop
+
+            #  Otherwise, keep track of the best one we've seen so far
+            if crop_variance > highest_variance:
+                highest_variance = crop_variance
+                best_crop = crop
+
+        return best_crop
 
     def __len__(self):
         return self.num_patches
