@@ -23,9 +23,13 @@ COCO_ZIP = DATASET_DIR / f"{COCO_NAME}.zip"
 OUTPUT_DIR = ROOT_DIR / "outputs"
 ZSSR_OUTPUT_DIR = OUTPUT_DIR / "zssr"
 SRRESNET_OUTPUT_DIR = OUTPUT_DIR / "srresnet"
+HYBRID_OUTPUT_DIR = OUTPUT_DIR / "hybrid"
 
 # Checkpoints Paths
 CHECKPOINT_DIR = ROOT_DIR / "checkpoints"
+
+# Pre-trained ResNet Weights 
+SRRESNET_WEIGHTS_PATH = "output/srresnet_model_allOFF/srresnet_final.pth"
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 ZSSR_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

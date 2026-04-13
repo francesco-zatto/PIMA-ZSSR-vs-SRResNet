@@ -458,7 +458,7 @@ class HybridRunner(AbstractRunner):
         trainable_params = filter(lambda p: p.requires_grad, self.model.parameters())
         optimizer = optim.Adam(trainable_params, lr=self.learning_rate)
 
-        dataloader = DataLoader(dataset, batch_size=32, shuffle=True, collate_fn=zssr_collate_fn)
+        dataloader = DataLoader(dataset, batch_size=4, shuffle=True, collate_fn=zssr_collate_fn)
 
         print(f"--- Starting Hybrid Test-Time Training for {n_epochs} epochs ---")
 

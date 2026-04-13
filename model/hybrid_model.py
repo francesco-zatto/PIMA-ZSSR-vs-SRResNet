@@ -21,6 +21,8 @@ class HybridSRNet(nn.Module):
         for param in self.srresnet.parameters():
             param.requires_grad = False
 
+        print(self.srresnet.use_batch_norm)
+
         self.zssr = ZSSRConvNet(**zssr_config)
         
         # Optional fusion head
