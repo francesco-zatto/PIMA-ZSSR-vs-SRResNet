@@ -139,9 +139,8 @@ class SRPipeline:
         self.runner.train(dataset, out_size=out_size, **kwargs)
             
         # Load Ground Truth Tensor for ZSSR's evaluation signature
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         hr_img = Image.open(hr_img_path).convert('RGB')
-        hr_true = transformsF.to_tensor(hr_img).to(device).unsqueeze(0)
+        hr_true = transformsF.to_tensor(hr_img).to(self.runner.device).unsqueeze(0)
         
         # Align spatial dimensions (Dataset rounding fallback)
         min_h = min(self.runner.out_size[0], hr_true.shape[-2])
@@ -176,9 +175,8 @@ class SRPipeline:
         print(f"Training Hybrid locally on {lr_img_path.name}...")
         self.runner.train(dataset, out_size=out_size, **kwargs)
             
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         hr_img = Image.open(hr_img_path).convert('RGB')
-        hr_true = transformsF.to_tensor(hr_img).to(device).unsqueeze(0)
+        hr_true = transformsF.to_tensor(hr_img).to(self.runner.device).unsqueeze(0)
         
         min_h = min(self.runner.out_size[0], hr_true.shape[-2])
         min_w = min(self.runner.out_size[1], hr_true.shape[-1])

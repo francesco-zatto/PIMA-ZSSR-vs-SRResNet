@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from .sr_resnet_model import SRResNet
 from .zssr_model import ZSSRConvNet
@@ -21,8 +22,6 @@ class HybridSRNet(nn.Module):
         for param in self.srresnet.parameters():
             param.requires_grad = False
 
-        print(self.srresnet.use_batch_norm)
-
         self.zssr = ZSSRConvNet(**zssr_config)
         
         # Optional fusion head
@@ -33,19 +32,30 @@ class HybridSRNet(nn.Module):
                 nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, padding=1)
             )
 
-    def forward(self, x):
+    def forward(self, x, out_size):
         """
         x: Low-resolution input patch/image
         """
         # Forward pass through the frozen SRResNet
+        x_sr = (x * 2.0) - 1.0
         with torch.no_grad():
-            sr_resnet_out = self.srresnet(x)
+            sr_resnet_out = self.srresnet(x_sr)
+        sr_resnet_out = (sr_resnet_out + 1.0) / 2.0
+        sr_resnet_out = torch.clamp(sr_resnet_out, 0.0, 1.0)
             
         # Forward pass through ZSSR
-        zssr_out = self.zssr(x)
+        zssr_out = self.zssr(x, out_size)
+
+        target_h, target_w = zssr_out.shape[-2:]
+        if sr_resnet_out.shape[-2:] != (target_h, target_w):
+            sr_resnet_out = F.interpolate(
+                sr_resnet_out, 
+                size=(target_h, target_w), 
+                mode='bicubic', 
+                align_corners=False
+            )
         
         # Integration
-        
         if self.integration_mode == 'distillation':
             return zssr_out, sr_resnet_out
             

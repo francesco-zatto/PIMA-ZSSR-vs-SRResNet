@@ -435,7 +435,7 @@ class HybridRunner(AbstractRunner):
             learning_rate: LR for test-time training
             distillation_weight: Weight for the teacher-student distillation loss (if used)
         """
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cpu") #torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = model.to(self.device)
         self.criterion = nn.L1Loss()
         self.learning_rate = learning_rate
@@ -445,7 +445,7 @@ class HybridRunner(AbstractRunner):
         self.test_img = None
         self.out_size = None
 
-    def train(self, dataset: AbstractSRDataset, out_size: torch.Size, n_epochs=50, **kwargs) -> None:
+    def train(self, dataset: AbstractSRDataset, out_size: torch.Size, n_epochs=10, n_scale_factors=3, **kwargs) -> None:
         """
         Executes test-time training on patches of a single image.
         """
@@ -456,43 +456,55 @@ class HybridRunner(AbstractRunner):
 
         # This prevents the optimizer from trying to update the frozen SRResNet
         trainable_params = filter(lambda p: p.requires_grad, self.model.parameters())
+        dataloader = DataLoader(dataset, batch_size=32, shuffle=True, collate_fn=zssr_collate_fn) 
         optimizer = optim.Adam(trainable_params, lr=self.learning_rate)
-
-        dataloader = DataLoader(dataset, batch_size=4, shuffle=True, collate_fn=zssr_collate_fn)
+        scheduler = ZSSRRunner.LinearFitLossLR(optimizer)
 
         print(f"--- Starting Hybrid Test-Time Training for {n_epochs} epochs ---")
 
-        for epoch in range(n_epochs):
-            epoch_loss = 0.0
+        scale_factors = np.linspace(1.0, dataset.scale_factor, n_scale_factors+1)[1:]
 
-            for i, (lr_patch, hr_patch) in enumerate(dataloader):
-                lr_patch, hr_true = lr_patch.to(self.device), hr_patch.to(self.device)
-                
-                optimizer.zero_grad()
-                
-                # Forward pass depends on integration mode
-                if self.model.integration_mode == 'distillation':
-                    zssr_out, srresnet_out = self.model(lr_patch)
-                    
-                    # Loss = Ground Truth L1 + Distillation L1 (Teacher-Student)
-                    loss_gt = self.criterion(zssr_out, hr_true)
-                    loss_distill = self.criterion(zssr_out, srresnet_out.detach())
-                    loss = loss_gt + (self.distillation_weight * loss_distill)
-                    
-                elif self.model.integration_mode == 'fusion_head':
-                    final_pred = self.model(lr_patch)
-                    loss = self.criterion(final_pred, hr_true)
-                    
-                else:
-                    raise ValueError("Unknown integration mode")
+        for s_i in scale_factors:
+            self._reset_lr(optimizer)
+            dataset.curr_s_i = s_i
+            self.model.train()
+            print(f"--- Training ZSSR with s_i={s_i} ---")
 
-                loss.backward()
-                optimizer.step()
-                
-                epoch_loss += loss.item()
-                
-            print(f"Epoch {epoch}/{n_epochs} - Loss: {epoch_loss / len(dataloader):.6f}")
+            for epoch in range(n_epochs):
+                epoch_loss = 0.0
 
+                for i, (lr_patch, hr_patch) in enumerate(dataloader):
+                    lr_patch, hr_true = lr_patch.to(self.device), hr_patch.to(self.device)
+                    lr_patch += self._compute_noise(lr_patch.shape)
+
+                    optimizer.zero_grad()
+                    
+                    # Extract the target size for the current patch
+                    patch_out_size = hr_true.shape[-2:]
+                    
+                    # Forward pass depends on integration mode
+                    if self.model.integration_mode == 'distillation':
+                        zssr_out, srresnet_out = self.model(lr_patch, out_size=patch_out_size)
+                        
+                        # Loss = Ground Truth L1 + Distillation L1 (Teacher-Student)
+                        loss_gt = self.criterion(zssr_out, hr_true)
+                        loss_distill = self.criterion(zssr_out, srresnet_out.detach())
+                        loss = loss_gt + (self.distillation_weight * loss_distill)
+                        
+                    elif self.model.integration_mode == 'fusion_head':
+                        final_pred = self.model(lr_patch, out_size=patch_out_size)
+                        loss = self.criterion(final_pred, hr_true)
+                        
+                    else:
+                        raise ValueError("Unknown integration mode")
+
+                    loss.backward()
+                    optimizer.step()
+                    scheduler.step(loss.item())
+                    
+                    epoch_loss += loss.item()
+                    
+                print(f"Epoch {epoch}/{n_epochs} - Loss: {epoch_loss / len(dataloader):.6f}")
 
     def evaluate(self, hr_true: torch.Tensor, save_hr: bool = True) -> dict:
         """
@@ -506,11 +518,11 @@ class HybridRunner(AbstractRunner):
         with torch.no_grad():
             lr_img = self.test_img
             
-            # Forward pass
+            # Forward pass using the full image out_size
             if self.model.integration_mode == 'distillation':
-                hr_pred, _ = self.model(lr_img)
+                hr_pred, _ = self.model(lr_img, out_size=self.out_size)
             elif self.model.integration_mode == 'fusion_head':
-                hr_pred = self.model(lr_img)
+                hr_pred = self.model(lr_img, out_size=self.out_size)
 
             # Clamp predictions to [0, 1] for metric calculation
             hr_pred = torch.clamp(hr_pred, 0.0, 1.0)
@@ -524,3 +536,17 @@ class HybridRunner(AbstractRunner):
         if save_hr:
             return results, hr_pred
         return results
+
+    def _reset_lr(self, optimizer: optim.Optimizer):
+        """
+        Reset optimizer's learning rate to initial learning rate.
+        """
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = self.learning_rate
+
+    def _compute_noise(self, lr_size: torch.Size) -> torch.Tensor:
+        """
+        Compute additional noise to add in current LR patch.
+        """
+        noise_std = 5.0 / 255.0
+        return torch.randn(lr_size, device=self.device) * noise_std
