@@ -4,6 +4,7 @@ import time
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 import torchvision.transforms.functional as transformsF
 import torch.optim.lr_scheduler as lr_scheduler
@@ -427,6 +428,45 @@ class ZSSRRunner(AbstractRunner):
             return [param_group['lr'] for param_group in self.optimizer.param_groups]
 
 
+class SobelEdgeLoss(nn.Module):
+    def __init__(self, device):
+        super(SobelEdgeLoss, self).__init__()
+        # Define 3x3 Sobel kernels for horizontal (x) and vertical (y) edges
+        kernel_x = torch.tensor([[-1.,  0.,  1.],
+                                 [-2.,  0.,  2.],
+                                 [-1.,  0.,  1.]], dtype=torch.float32)
+        
+        kernel_y = torch.tensor([[-1., -2., -1.],
+                                 [ 0.,  0.,  0.],
+                                 [ 1.,  2.,  1.]], dtype=torch.float32)
+        
+        # Reshape to (out_channels, in_channels/groups, kH, kW)
+        # We repeat it 3 times to handle the 3 RGB channels independently
+        self.weight_x = kernel_x.view(1, 1, 3, 3).repeat(3, 1, 1, 1).to(device)
+        self.weight_y = kernel_y.view(1, 1, 3, 3).repeat(3, 1, 1, 1).to(device)
+        
+        # We do not want the optimizer to update our fixed edge-detection kernels
+        self.weight_x.requires_grad = False
+        self.weight_y.requires_grad = False
+
+    def forward(self, pred, target):
+        # Pad inputs using reflection to prevent artifacts at the image borders
+        pred_pad = F.pad(pred, (1, 1, 1, 1), mode='reflect')
+        target_pad = F.pad(target, (1, 1, 1, 1), mode='reflect')
+        
+        # Extract gradients using depthwise convolution (groups=3)
+        pred_grad_x = F.conv2d(pred_pad, self.weight_x, groups=3)
+        pred_grad_y = F.conv2d(pred_pad, self.weight_y, groups=3)
+        
+        target_grad_x = F.conv2d(target_pad, self.weight_x, groups=3)
+        target_grad_y = F.conv2d(target_pad, self.weight_y, groups=3)
+        
+        # Calculate L1 loss on the horizontal and vertical gradients
+        loss_x = F.l1_loss(pred_grad_x, target_grad_x)
+        loss_y = F.l1_loss(pred_grad_y, target_grad_y)
+        
+        return loss_x + loss_y
+
 class HybridRunner(AbstractRunner):
     def __init__(self, model, learning_rate=1e-3, distillation_weight=0.5):
         """
@@ -435,20 +475,23 @@ class HybridRunner(AbstractRunner):
             learning_rate: LR for test-time training
             distillation_weight: Weight for the teacher-student distillation loss (if used)
         """
-        self.device = torch.device("cpu") #torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = model.to(self.device)
         self.criterion = nn.L1Loss()
+        self.edge_criterion = SobelEdgeLoss(self.device)
         self.learning_rate = learning_rate
         self.distillation_weight = distillation_weight
+        self.edge_weight = 0.5
         
         self.metrics = SRMetricSuite(self.device)
         self.test_img = None
         self.out_size = None
 
-    def train(self, dataset: AbstractSRDataset, out_size: torch.Size, n_epochs=10, n_scale_factors=3, **kwargs) -> None:
+    def train(self, dataset: AbstractSRDataset, out_size: torch.Size, n_epochs=50, n_scale_factors=3, **kwargs) -> None:
         """
         Executes test-time training on patches of a single image.
         """
+        self.model.zssr.apply(ZSSRRunner._reset_all_weights)
         self.model.train()
 
         self.test_img = dataset.strategy.base_img.unsqueeze(0).to(self.device)
@@ -475,7 +518,9 @@ class HybridRunner(AbstractRunner):
 
                 for i, (lr_patch, hr_patch) in enumerate(dataloader):
                     lr_patch, hr_true = lr_patch.to(self.device), hr_patch.to(self.device)
-                    lr_patch += self._compute_noise(lr_patch.shape)
+                    if self.model.integration_mode != 'cascade':
+                        lr_patch += self._compute_noise(lr_patch.shape)
+                    
 
                     optimizer.zero_grad()
                     
@@ -494,7 +539,14 @@ class HybridRunner(AbstractRunner):
                     elif self.model.integration_mode == 'fusion_head':
                         final_pred = self.model(lr_patch, out_size=patch_out_size)
                         loss = self.criterion(final_pred, hr_true)
-                        
+
+                    elif self.model.integration_mode == 'cascade':
+                        final_pred = self.model(lr_patch, out_size=patch_out_size)
+                        loss_pixel = self.criterion(final_pred, hr_true)
+                        loss_edge = self.edge_criterion(final_pred, hr_true)
+                
+                        loss = loss_pixel + self.edge_weight * loss_edge       
+                                            
                     else:
                         raise ValueError("Unknown integration mode")
 
@@ -503,8 +555,9 @@ class HybridRunner(AbstractRunner):
                     scheduler.step(loss.item())
                     
                     epoch_loss += loss.item()
-                    
-                print(f"Epoch {epoch}/{n_epochs} - Loss: {epoch_loss / len(dataloader):.6f}")
+
+                if epoch % 5 == 0:                    
+                    print(f"Epoch {epoch}/{n_epochs} - Loss: {epoch_loss / len(dataloader):.6f}")
 
     def evaluate(self, hr_true: torch.Tensor, save_hr: bool = True) -> dict:
         """
@@ -521,7 +574,7 @@ class HybridRunner(AbstractRunner):
             # Forward pass using the full image out_size
             if self.model.integration_mode == 'distillation':
                 hr_pred, _ = self.model(lr_img, out_size=self.out_size)
-            elif self.model.integration_mode == 'fusion_head':
+            else:
                 hr_pred = self.model(lr_img, out_size=self.out_size)
 
             # Clamp predictions to [0, 1] for metric calculation

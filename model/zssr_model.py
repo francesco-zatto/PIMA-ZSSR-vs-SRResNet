@@ -89,3 +89,17 @@ class ZSSRConvNet(nn.Module):
         elif self.sigmoid_mode == 'after':
             out = res + x_up
             return self.final_conv(out)
+
+    def _init_weights(self):
+        for module in self.network:
+            if hasattr(module, '_init_weights'):
+                module._init_weights()
+        
+        # Re-init last_conv to zero
+        last_conv = self.network[-1]
+        nn.init.zeros_(last_conv.weight)
+        nn.init.zeros_(last_conv.bias)
+        
+        # Re-init final_conv if it's not Identity
+        if isinstance(self.final_conv, FinalConvBlock):
+            self.final_conv._init_weights()
