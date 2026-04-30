@@ -77,7 +77,8 @@ if __name__ == "__main__":
     # Initialize runner
     runner = SRResNetRunner(
         use_batch_norm=args.use_batch_norm,
-        final_activation=args.final_activation
+        final_activation=args.final_activation,
+        scale_lr=args.scale_lr
     )
     
     # Set output directory
@@ -137,6 +138,7 @@ if __name__ == "__main__":
                 dataset_zip_path=str(data_zip),
                 datasets_dir=str(data_dir.parent),
                 output_dir=str(dataset_output),
+                dataset_class=dataset_class,
                 scale_factor=float(args.scale_factor)
             )
             pipeline.run()    

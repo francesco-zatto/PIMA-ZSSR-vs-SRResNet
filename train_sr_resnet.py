@@ -71,11 +71,11 @@ if __name__ == "__main__":
     # instantiate the SRResNet pipeline
     print("Initializing SRResNet Runner...")
     
-    # Pass the architectural toggles to your runner 
-    # (Ensure your SRResNetRunner __init__ accepts these and passes them to the SRResNet model)
+    # Pass the architectural toggles to runner 
     runner = SRResNetRunner(
         use_batch_norm=args.use_batch_norm,
-        final_activation=args.final_activation
+        final_activation=args.final_activation,
+        scale_lr=args.scale_lr
     )
     
     # Determine checkpoint load path

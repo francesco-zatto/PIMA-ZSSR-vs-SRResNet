@@ -8,18 +8,19 @@ from pathlib import Path
 from PIL import Image
 import torchvision.transforms.functional as transformsF
 
-from data.datasets import Urban100Dataset
+from data.datasets import Urban100Dataset, BSD100Dataset
 from data.preprocessing import ZSSRPreprocessing, ResNetPreprocessing
 from data.utils import estimate_michaeli_irani_kernel
 from runner.runners import AbstractRunner
 import config
 
 class SRPipeline:
-    def __init__(self, runner: AbstractRunner, dataset_zip_path: str, datasets_dir: str, output_dir: str, scale_factor: float = 4.0):
+    def __init__(self, runner: AbstractRunner, dataset_zip_path: str, datasets_dir: str, output_dir: str, dataset_class, scale_factor: float = 4.0):
         self.runner = runner
         self.dataset_zip_path = Path(dataset_zip_path)
         self.datasets_dir = Path(datasets_dir)
         self.output_dir = Path(output_dir)
+        self.dataset_class = dataset_class
         self.scale_factor = scale_factor
 
     def extract_dataset(self) -> Path:
@@ -84,19 +85,25 @@ class SRPipeline:
                 target_img_path = temp_dir_path / hr_img_path.name
                 shutil.copy(hr_img_path, target_img_path)
                 
-                strategy = ResNetPreprocessing(train=False)
-                dataset = Urban100Dataset(root_dir=str(temp_dir_path), scale_factor=self.scale_factor, strategy=strategy)
-                
+                strategy = ResNetPreprocessing(train=False, scale_LR=getattr(self.runner, 'scale_lr', False))
+                dataset = self.dataset_class(root_dir=str(temp_dir_path), scale_factor=self.scale_factor, strategy=strategy)
+
                 # SRResNet is already trained globally, so just evaluate
                 results, hr_pred = self.runner.evaluate(dataset)
 
+                if getattr(self.runner, 'final_activation', False):
+                    pred_tensor = (hr_pred + 1.0) / 2.0
+                else:
+                    pred_tensor = hr_pred
+
                 pred_tensor = hr_pred.squeeze(0).cpu().clamp(0, 1)
                 pred_pil = transformsF.to_pil_image(pred_tensor)
+                print(f" {lr_img_path.stem} | Size: {pred_pil.size}")
                 
                 save_filename = f"{lr_img_path.stem}_SRResNet_pred.png"
                 save_path = self.output_dir / save_filename
                 pred_pil.save(save_path)
-                print(f"Saved SRResNet prediction to: {save_path.name}")
+                print(f"Saved SRResNet prediction to: {save_path}")
 
 
         # Log Metrics
@@ -146,10 +153,14 @@ class SRPipeline:
                     if not hr_path_candidates:
                         hr_name = lr_path.name.replace('LR', 'HR').replace('x4', '')
                         hr_path_candidates = list(extracted_dir.rglob(hr_name))
-                            
+
                     if not hr_path_candidates:
                         print(f"Warning: Could not find HR ground truth for {lr_path.name}. Skipping.")
                         continue
+                
+                    for i, cand in enumerate(hr_path_candidates):
+                        with Image.open(cand) as img:
+                             print(f"  Candidate {i}: {cand.relative_to(extracted_dir)} | Size: {img.size}")
                         
                     # Clean the shared folder before processing the next image
                     for item in shared_temp_path.iterdir():
@@ -215,8 +226,10 @@ class SRPipeline:
         shutil.copy(hr_img_path, target_img_path)
         
         strategy = ResNetPreprocessing(train=False)
-        dataset = Urban100Dataset(root_dir=str(temp_dir_path), scale_factor=self.scale_factor, strategy=strategy)
-        
+        #dataset = Urban100Dataset(root_dir=str(temp_dir_path), scale_factor=self.scale_factor, strategy=strategy)
+        dataset = BSD100Dataset(root_dir=str(temp_dir_path), scale_factor=self.scale_factor, strategy=strategy)
+        print("we go here?")
+
         # SRResNet is already trained globally, so just evaluate
         results = self.runner.evaluate(dataset)
         

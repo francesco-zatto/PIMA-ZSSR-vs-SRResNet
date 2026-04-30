@@ -1,3 +1,4 @@
+from __future__ import annotations
 from abc import ABC, abstractmethod
 from pathlib import Path
 import time
@@ -8,6 +9,7 @@ import torch.optim as optim
 import torchvision.transforms.functional as transformsF
 import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.data import DataLoader
+
 
 from data.datasets import AbstractSRDataset
 from metrics.metrics import SRMetricSuite
@@ -33,10 +35,15 @@ class AbstractRunner(ABC):
         pass
 
 class SRResNetRunner(AbstractRunner):
-    def __init__(self, use_batch_norm=False, final_activation=False):
+    def __init__(self, use_batch_norm=False, final_activation=False, scale_lr=False):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.criterion = nn.L1Loss()
         self.learning_rate = 1e-4
+
+        self.use_batch_norm = use_batch_norm
+        self.final_activation = final_activation
+        self.scale_lr = scale_lr
+
         self.model = SRResNet(
             use_batch_norm=use_batch_norm, 
             final_activation=final_activation
